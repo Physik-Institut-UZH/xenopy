@@ -4,6 +4,6 @@ setup(
     name='xenopy',
     version='0.1.0',
     packages=find_packages(),
-    description='Analysis tools for Xenoscope',
+    description='Processing and analysis tools for Xenoscope',
     install_requires=[],
 )
