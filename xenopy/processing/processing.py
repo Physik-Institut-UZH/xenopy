@@ -3,7 +3,7 @@ import numpy as np
 import awkward as ak
 from scipy.ndimage import gaussian_filter1d
 import csv
-from io import load_xenodaq_run, print_file_structure
+from ..io import load_xenodaq_run, print_file_structure
 from matplotlib.gridspec import GridSpec
 
 
