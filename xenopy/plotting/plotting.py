@@ -214,7 +214,7 @@ def plot_all_tiles_average(avg_waveforms: dict, title: str = '') -> plt.Figure:
     for tile in tiles:
         wf = avg_waveforms[tile]
         x = np.arange(len(wf))
-        ax.plot(x, wf, label=f'Tile {tile}', alpha=0.8)
+        ax.plot(x, wf, label=f'Tile {tile[-1]}', alpha=0.8)
 
     ax.set_xlabel(r'$\mathrm{Sample~number}$')
     ax.set_ylabel(r'$\mathrm{ADC~counts}$')
