@@ -3,9 +3,12 @@ import numpy as np
 from matplotlib.gridspec import GridSpec
 from typing import Optional
 
+
 def plot_waveform(waveform_array: np.ndarray, full_y: bool | tuple[float, float] = False,
                   full_x: bool = True, pe: bool = False,
                   title: str = '',
+                  baseline_range: Optional[tuple[int, int]] = None,
+                  signal_range: Optional[tuple[int, int]] = None,
                   ax: Optional[plt.Axes] = None) -> plt.Axes:
     """Plot a waveform from its array.
 
@@ -13,7 +16,7 @@ def plot_waveform(waveform_array: np.ndarray, full_y: bool | tuple[float, float]
         waveform_array (np.ndarray): waveform array. Elements of the array
             correspond to the sample of the waveform and its value the recorded ADC
             counts.
-        full_y (bool, optional): plot full range of ADC amplitude. Defaults
+        full_y (bool | tuple[float, float], optional): plot full range of ADC amplitude or specify y-axis limits. Defaults
             to False.
         full_x (bool, optional): plot full range of ADC samples. Defaults
             to True.
@@ -36,6 +39,10 @@ def plot_waveform(waveform_array: np.ndarray, full_y: bool | tuple[float, float]
     ax.axhline(baseline_rough + std_rough, ls='--', lw=1.2, c='darkorange', alpha=0.8)
     ax.axhline(baseline_rough - std_rough * 5, ls='--', lw=1.2, c='firebrick', alpha=0.8, label=r"Baseline ± 5$\sigma$")
     ax.axhline(baseline_rough + std_rough * 5, ls='--', lw=1.2, c='firebrick', alpha=0.8)
+    if baseline_range is not None:
+        ax.axvspan(*baseline_range, alpha=0.15, color='gray', label=f"Baseline [{baseline_range[0]}:{baseline_range[1]}]")
+    if signal_range is not None:
+        ax.axvspan(*signal_range, alpha=0.15, color='green', label=f"Signal [{signal_range[0]}:{signal_range[1]}]")
     if full_x != True:
         ax.set_xlim(full_x)
     if isinstance(full_y, tuple):
