@@ -1,0 +1,88 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from typing import Optional
+
+
+# charge computation -> in processing? 
+
+def compute_charge(waveforms: np.ndarray,
+                   baseline_range: tuple[int, int] = (0, 50),
+                   signal_range: tuple[int, int] = (110, 140)) -> np.ndarray:
+    """Compute integrated charge for each waveform
+    by baseline-subtracting and summing over the signal region (can be set)
+
+    """
+    b0, b1 = baseline_range
+    s0, s1 = signal_range
+    baseline = waveforms[:, b0:b1].mean(axis=1, keepdims=True)
+    charge = -(waveforms[:, s0:s1] - baseline).sum(axis=1)
+    return charge
+
+
+def compute_charge_all_tiles(tiles: dict,
+                             baseline_range: tuple[int, int] = (0, 50),
+                             signal_range: tuple[int, int] = (110, 140)) -> dict:
+    """Compute charge for all tiles
+    """
+    return {
+        tile: compute_charge(tiles[tile]["waveforms"], baseline_range, signal_range)
+        for tile in tiles
+    }
+
+
+# single spectrum 
+
+def plot_spectrum(charge: np.ndarray,
+                  bins: int = 400,
+                  range: Optional[tuple[float, float]] = (-100, 2000),
+                  log_y: bool = False,
+                  title: str = '',
+                  ax: Optional[plt.Axes] = None) -> plt.Axes:
+    """Plot a charge spectrum for one tile.
+    """
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(7, 4))
+
+    ax.hist(charge, bins=bins, range=range,
+            histtype='step', linewidth=1.2, color='royalblue')
+    ax.set_xlabel(r"$\mathrm{Charge~[ADC~counts]}$")
+    ax.set_ylabel(r"$\mathrm{Counts}$")
+    if log_y:
+        ax.set_yscale('log')
+    if title:
+        ax.set_title(title)
+    return ax
+
+
+# overlay spectra for different LED voltages 
+
+def plot_spectra_vs_led(charge_by_led: dict,
+                        bins: int = 400,
+                        range: tuple[float, float] = (-100, 2000),
+                        log_y: bool = False,
+                        title: str = '',
+                        cmap: str = 'tab10',
+                        ax: Optional[plt.Axes] = None) -> plt.Axes:
+    """Overlay charge spectra for different LED voltages on one tile.
+    """
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(8, 5))
+
+    sorted_items = sorted(charge_by_led.items(),
+                          key=lambda kv: float(kv[0].replace(" ", "").rstrip("V")))
+    colors = plt.get_cmap(cmap)(np.linspace(0.15, 0.85, len(sorted_items)))
+
+    for (led, charge), color in zip(sorted_items, colors):
+        ax.hist(charge, bins=bins, range=range,
+                histtype='step', linewidth=1.2,
+                color=color, alpha=0.8, label=f"{led}")
+
+    ax.set_xlabel(r"$\mathrm{Charge~[ADC~counts]}$")
+    ax.set_ylabel(r"$\mathrm{Counts}$")
+    if log_y:
+        ax.set_yscale('log')
+    if title:
+        ax.set_title(title)
+    ax.legend(title="LED voltage", ncol=2)
+    return ax
+
