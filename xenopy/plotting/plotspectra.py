@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from typing import Optional
-
+from xenopy.processing.spectra import _gaussian
 
 # charge computation -> in processing? 
 
@@ -86,3 +86,36 @@ def plot_spectra_vs_led(charge_by_led: dict,
     ax.legend(title="LED voltage", ncol=2)
     return ax
 
+def plot_spectrum_fit(fit_result: dict,
+                      title: str = "",
+                      ax: Optional[plt.Axes] = None) -> plt.Axes:
+    """Plot histogram plus fitted 0-PE and 1-PE Gaussians """
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(8, 5))
+
+    hist = fit_result["hist"]
+    bin_edges = fit_result["bin_edges"]
+    bin_centers = fit_result["bin_centers"]
+
+    ax.hist(bin_centers, bins=bin_edges, weights=hist,
+            histtype='step', linewidth=1.2, color='black', label='Data')
+
+    x_plot = np.linspace(bin_edges[0], bin_edges[-1], 2000)
+
+    fit0 = fit_result.get("fit_0pe")
+    if fit0 is not None:
+        p0 = fit0["params"]
+        ax.plot(x_plot, _gaussian(x_plot, *p0), color='dodgerblue', lw=2, alpha=0.8,
+            label="Pedestal fit")
+
+    fit1 = fit_result["fit_1pe"]
+    p1 = fit1["params"]
+    ax.plot(x_plot, _gaussian(x_plot, *p1), color='orangered', lw=2, alpha=0.8,
+            label="1-PE peak fit")
+
+    ax.set_xlabel(r"$\mathrm{Charge~[ADC~counts]}$")
+    ax.set_ylabel(r"$\mathrm{Counts}$")
+    if title:
+        ax.set_title(title)
+    ax.legend(loc='best')
+    return ax
