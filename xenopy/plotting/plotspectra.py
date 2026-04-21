@@ -93,3 +93,54 @@ def plot_spectrum_fit(fit_result: dict,
         ax.set_title(title)
     ax.legend(loc='best')
     return ax
+
+def plot_occupancy_vs_led(
+        data: dict,
+        title: str = '',
+        occ_range: Optional[tuple[float, float]] = (1, 3),
+        color: str = '#9a0505',
+        colors: Optional[list] = None,
+        ax: Optional[plt.Axes] = None) -> plt.Axes:
+    """Plot occupancy vs LED voltage — single or multiple curves.
+
+    Parameters
+    ----------
+    data : dict
+        Single curve: ``{led_str: (occ, occ_err)}``
+        Multiple curves: ``{label: {led_str: (occ, occ_err)}}``
+        As returned by looping ``xs.compute_occupancy()`` over LED voltages.
+    """
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(6, 4))
+
+    multi = isinstance(next(iter(data.values())), dict)
+
+    def _plot_one(occ_by_led, label, col):
+        x      = [float(led[:-1])   for led in sorted(occ_by_led, key=lambda k: float(k[:-1]))]
+        occ_vals  = [occ_by_led[led][0] for led in sorted(occ_by_led, key=lambda k: float(k[:-1]))]
+        occ_errs  = [occ_by_led[led][1] for led in sorted(occ_by_led, key=lambda k: float(k[:-1]))]
+        kw = dict(fmt='o-', capsize=4)
+        if col is not None:
+            kw['color'] = col
+        if label is not None:
+            kw['label'] = label
+        ax.errorbar(x, occ_vals, yerr=occ_errs, **kw)
+
+    if multi:
+        _colors = colors if colors is not None else [None] * len(data)
+        for (label, occ_by_led), col in zip(data.items(), _colors):
+            _plot_one(occ_by_led, label, col)
+        ax.legend(loc='upper left')
+    else:
+        _plot_one(data, None, color)
+
+    if occ_range is not None:
+        ax.axhspan(*occ_range, alpha=0.15, color='darkseagreen', label='target range')
+
+    ax.set_xlabel('LED voltage [V]')
+    ax.set_ylabel('λ [PE / trigger]')
+    if title:
+        ax.set_title(title)
+
+    plt.tight_layout()
+    return ax
