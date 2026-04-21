@@ -3,32 +3,6 @@ import matplotlib.pyplot as plt
 from typing import Optional
 from xenopy.processing.spectra import _gaussian
 
-# charge computation -> in processing? 
-
-def compute_charge(waveforms: np.ndarray,
-                   baseline_range: tuple[int, int] = (0, 50),
-                   signal_range: tuple[int, int] = (110, 140)) -> np.ndarray:
-    """Compute integrated charge for each waveform
-    by baseline-subtracting and summing over the signal region (can be set)
-
-    """
-    b0, b1 = baseline_range
-    s0, s1 = signal_range
-    baseline = waveforms[:, b0:b1].mean(axis=1, keepdims=True)
-    charge = -(waveforms[:, s0:s1] - baseline).sum(axis=1)
-    return charge
-
-
-def compute_charge_all_tiles(tiles: dict,
-                             baseline_range: tuple[int, int] = (0, 50),
-                             signal_range: tuple[int, int] = (110, 140)) -> dict:
-    """Compute charge for all tiles
-    """
-    return {
-        tile: compute_charge(tiles[tile]["waveforms"], baseline_range, signal_range)
-        for tile in tiles
-    }
-
 
 # single spectrum 
 
