@@ -53,7 +53,7 @@ def _fit_gaussian_in_window(hist: np.ndarray,
 
 def fit_spectrum(charge: np.ndarray,
                  bins: int = 500,
-                 range: tuple[float, float] = (-100, 5000),
+                 range: tuple[float, float] = (-100, 2000),
                  window_0pe: Optional[tuple[float, float]] = None,
                  window_1pe: Optional[tuple[float, float]] = None,
                  min_peak_separation: float = 80.0) -> dict:
