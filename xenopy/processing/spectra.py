@@ -1,6 +1,8 @@
 import numpy as np
 from typing import Optional
 from scipy.optimize import curve_fit
+from scipy.signal import find_peaks
+from scipy.ndimage import uniform_filter1d
 
 def compute_charge(waveforms: np.ndarray,
                    baseline_range: tuple[int, int] = (0, 50),
@@ -87,11 +89,20 @@ def fit_spectrum(charge: np.ndarray,
     if window_1pe is None:
         search_start = center_for_1pe + max(min_peak_separation, 3.0 * bin_width)
         mask1search = bin_centers >= search_start
-        if np.any(mask1search) and np.max(hist[mask1search]) > 0:
-            idx1 = np.where(mask1search)[0][int(np.argmax(hist[mask1search]))]
-            peak1_guess = float(bin_centers[idx1])
-        else:
-            peak1_guess = center_for_1pe + max(0.15 * span, min_peak_separation)
+        idxs = np.where(mask1search)[0]
+        peak1_guess = None
+        if idxs.size >= 5:
+            h_smooth = uniform_filter1d(hist[idxs].astype(float), size=5)
+            peaks, _ = find_peaks(h_smooth, height=np.max(h_smooth) * 0.05)
+            if peaks.size > 0:
+                # take the first peak found (lowest charge = 1-PE)
+                peak1_guess = float(bin_centers[idxs[peaks[0]]])
+        if peak1_guess is None:
+            if np.any(mask1search) and np.max(hist[mask1search]) > 0:
+                idx1 = np.where(mask1search)[0][int(np.argmax(hist[mask1search]))]
+                peak1_guess = float(bin_centers[idx1])
+            else:
+                peak1_guess = center_for_1pe + max(0.15 * span, min_peak_separation)
         halfw1 = max(60.0, 0.06 * span)
         window_1pe = (peak1_guess - halfw1, peak1_guess + halfw1)
     else:
@@ -132,3 +143,4 @@ def fit_spectrum(charge: np.ndarray,
         "mean_1pe": mean_1pe,
         "sigma_1pe": sigma_1pe
     }
+
