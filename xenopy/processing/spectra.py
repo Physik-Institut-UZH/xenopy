@@ -144,3 +144,40 @@ def fit_spectrum(charge: np.ndarray,
         "sigma_1pe": sigma_1pe
     }
 
+def calculate_gain(fit_result: dict, 
+             F_amp: float = 1,
+             ADC_range: float = 2.25,
+             ADC_impedance: float = 50,
+             ADC_res: float = 2**14,
+             q_e: float = 1.602176634e-19,
+             ):
+    """ Calculates the gain based on the 1PE peak """
+
+    spe_corrected_area = fit_result["mean_1pe"] - fit_result["mean_0pe"]
+    spe_sigma = np.sqrt(fit_result[f"sigma_0pe"]**2  + fit_result[f"sigma_1pe"]**2)
+    gain = (ADC_range * spe_corrected_area * 1e-9 / ADC_impedance / F_amp /
+            ADC_res / q_e)
+    sigma = (ADC_range * spe_sigma * 1e-9 / ADC_impedance / F_amp /
+            ADC_res / q_e)
+    
+    return gain, sigma
+
+def _linear_func(x, m, c):
+    return m * x + c
+
+def fit_breakdown_voltage(bias: np.array, 
+                          gain: np.array):
+    """Fits a linear function to gain vs bias voltage"""
+
+    popt, pcov = curve_fit(_linear_func, bias, gain)
+    return popt, pcov
+
+def calculate_breakdown_voltage(bias: np.array, 
+                                gain: np.array):
+    """Calculated the breakdown voltage based on the fit,
+    by calculating the x-axis intercept of it"""
+
+    popt, pcov = fit_breakdown_voltage(bias, gain)
+    breakdown_voltage = - popt[1]/popt[0]
+
+    return breakdown_voltage, popt
