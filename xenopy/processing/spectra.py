@@ -53,7 +53,7 @@ def _fit_gaussian_in_window(hist: np.ndarray,
 
 def fit_spectrum(charge: np.ndarray,
                  bins: int = 500,
-                 range: tuple[float, float] = (-100, 5000),
+                 range: tuple[float, float] = (-100, 2000),
                  window_0pe: Optional[tuple[float, float]] = None,
                  window_1pe: Optional[tuple[float, float]] = None,
                  min_peak_separation: float = 80.0) -> dict:
@@ -165,6 +165,8 @@ def calculate_gain(fit_result: dict,
 def _linear_func(x, m, c):
     return m * x + c
 
+####### breakdown voltage analysis 
+
 def fit_breakdown_voltage(bias: np.array, 
                           gain: np.array):
     """Fits a linear function to gain vs bias voltage"""
@@ -181,3 +183,36 @@ def calculate_breakdown_voltage(bias: np.array,
     breakdown_voltage = - popt[1]/popt[0]
 
     return breakdown_voltage, popt
+
+####### light-level optimization 
+
+def compute_occupancy(charge: np.ndarray, fit_result: dict, n_sigma: float = 3.0) -> tuple[float, float]:
+    """Compute occupancy from a charge array and fit results
+
+    Uses the Poisson estimator: lambda = -ln(N_ped / N_total), where N_ped is the
+    number of events within `n_sigma` of the pedestal mean.
+    """
+    threshold = fit_result["mean_0pe"] + n_sigma * fit_result["sigma_0pe"]
+    n_ped = int(np.sum(charge < threshold))
+    n_tot = len(charge)
+    if n_ped == 0 or n_ped >= n_tot:
+        return np.nan, np.nan
+    occ = -np.log(n_ped / n_tot)
+    occ_err = 1.0 / np.sqrt(n_ped)
+    return occ, occ_err
+
+
+def peak_to_valley(fit_result):
+    bin_centers = fit_result["bin_centers"]
+    hist = fit_result["hist"]
+    mean_0pe = fit_result["mean_0pe"]
+    mean_1pe = fit_result["mean_1pe"]
+    
+    # valley is between 0-PE and 1-PE peaks
+    mask = (bin_centers > mean_0pe) & (bin_centers < mean_1pe)
+    if not np.any(mask) or np.min(hist[mask]) == 0:
+        return np.nan
+    
+    valley_min = np.min(hist[mask])
+    peak_1pe = fit_result["fit_1pe"]["params"][0]  # amplitude from Gaussian fit
+    return peak_1pe / valley_min
