@@ -54,8 +54,7 @@ def bin_multiple_waveforms(arr, factor):
 
 ###### Process Multiple Files ######
 
-def process_config(date, datadir, wfs_load_map={"0": ["wf0", "wf1", "wf2", "wf3", "wf4", "wf4"], 
-                    "1": ["wf9", "wf10", "wf11", "wf12", "wf13", "wf14"]}):
+def process_config(date, datadir):
     """
     Processes a single muon coincidence file by subtracting the baseline and summing all channels for each event.
     Returns an array containing the summed signal per event.
@@ -68,12 +67,9 @@ def process_config(date, datadir, wfs_load_map={"0": ["wf0", "wf1", "wf2", "wf3"
     
     
     # Load waveforms
-    wfs, wfs_df = load_xenodaq_run(date, 
-                                    datadir,
-                                    wfs_to_load=wfs_load_map)
+    wfs, wfs_df, tiles = load_xenodaq_run(date, datadir)
     
-    gain = {key for key in wfs.keys()}
-
+    gain = {key for key in tiles.keys()}
 
     ## Apply gain! -> skip this during shifter checks, just set all to 1
     ## needs reimplementing for new daq
@@ -93,13 +89,13 @@ def process_config(date, datadir, wfs_load_map={"0": ["wf0", "wf1", "wf2", "wf3"
     # gain["mod0"]["wf6"] = 1
     # gain["mod0"]["wf7"] = 1
 
-    gain = {key: 1 for key in wfs}
+    gain = {key: 1 for key in tiles}
 
-    baseline, _ = get_avgbaseline_all_channels(wfs)
+    baseline, _ = get_avgbaseline_all_channels(tiles)
 
     data_baselinecorrected = {
-        key: (baseline[key] - wfs[key][:, :])/gain[key]  
-        for key in wfs.keys()}
+        key: (baseline[key] - tiles[key][:, :])/gain[key]  
+        for key in tiles.keys()}
 
     summed_channels = np.sum(
         np.stack([
@@ -119,21 +115,16 @@ def process_config(date, datadir, wfs_load_map={"0": ["wf0", "wf1", "wf2", "wf3"
 
 
 
-def process_multiple_files(file_list, startEvent=0, channels=False, rebin=False):
+def process_multiple_files(file_list, channels=False, rebin=False):
     """
-    Processes multiple muon coincidence files by computing the average waveform for all events
+    Processes multiple files by computing the average waveform for all events
     across all summed channels with subtracted baseline. Returns the result as an array.
-
-    Additionally, it prints the number of 'clean' events—events that contain 
-    only a single S2 signal within the expected time window.
-
+    
     Args:
         file_list (list of str): List of input file names. Files must be located 
             in the 'filling' folder and begin with 'mucoin'.
         expectedS2Window (list of float): The expected time window for 
             S2 arrival, specified as [min, max].
-        startEvent (int, optional): Use this to skip the first event if needed 
-            (e.g., if Module1 misses it). Defaults to 0.
         channel (boolean): if True keep raw waveforms of single channels and baseline and time
         rebin (boolean): if True rebin the waveforms by factor 2
 
@@ -143,7 +134,7 @@ def process_multiple_files(file_list, startEvent=0, channels=False, rebin=False)
     summed_channels = []
 
     for i,run_name in enumerate(file_list):
-        summed_channel, single_channel, baseline = process_config(run_name, startEvent) 
+        summed_channel, single_channel, baseline = process_config(run_name) 
         single_channel = ak.Array(single_channel)
       
         if i == 0:
@@ -180,6 +171,9 @@ def process_multiple_files(file_list, startEvent=0, channels=False, rebin=False)
 ## REMARK: Currently this is only plausible for muons as the pulse finder was tuned for muons!
 
 def DoGPulseFinder(rawWf):
+
+    """ Pulse finder based on the difference of gaussians """
+
     # Sigmas are tuned to muons in xenoscope, redo more carefully with clean data
     sigma_1 = 200
     sigma_2 = 1000
@@ -255,7 +249,7 @@ def mergePulses(rawWf, starts, ends, peaks):
 
 
 def getFWHM(rawWf, start, end, peak):
-    # Define FWHM as the time from the first halfmax until the last halfmax in the pulse
+    """ Define FWHM as the time from the first halfmax until the last halfmax in the pulse """
 
     halfMax = rawWf[peak]/2
     left_index = np.where(rawWf[start:peak] >= halfMax)[0][0] + start
@@ -326,17 +320,18 @@ def getMaxChannel(single_channels, start, end):
     return maxChannel
     
 
-def processEvents(filelist, startEvent=0):
+def processEvents(filelist):
     """
+    Full processing of events with pusle finder tuned for muon events
+
     Args:
         filelist [list]: List of file names
-        startEvent: in case a file has a different start event than 0
 
     Output: awkward array of rawWFs and pulse shape variablels
     """
     merge = True
     
-    summed_channels, single_channels, baseline = process_multiple_files(filelist, startEvent=startEvent, channels=True, rebin=False)
+    summed_channels, single_channels, baseline = process_multiple_files(filelist, channels=True, rebin=False)
 
     pulses = []
     
