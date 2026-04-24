@@ -119,6 +119,7 @@ def _match_value(field: str, target: str) -> bool:
 def load_xenodaq_run(
     dataset: str,
     datadir: str = 'datasets',
+    filenumbers: List[int] = [0],
     wfs_to_load: Optional[Dict[str, List[str]]] = None,
     channel_map: Optional[Dict] = None
 ) -> Tuple[Dict[str, np.ndarray], pd.DataFrame, Optional[Dict]]:
@@ -136,6 +137,7 @@ def load_xenodaq_run(
         Dataset name (e.g., '20260226_160258')
     datadir : str, default 'datasets'
         Base directory containing datasets
+    filenumbers : list, default 0
     wfs_to_load : dict, optional
         Dictionary mapping digitizer number to list of waveform names.
         Example: {"0": ["wf0", "wf1"], "1": ["wf9", "wf10"]}
@@ -179,7 +181,11 @@ def load_xenodaq_run(
     if not ds_flist:
         raise FileNotFoundError(f"No ROOT files found in {dirpath}")
 
-    rootfile_path = ds_flist[0]
+    rootfile_paths = []
+    for num in filenumbers:
+        suffix = f"_{num:04d}.root"
+        filepath = [f for f in ds_flist if f.endswith(suffix)]
+        rootfile_paths.extend(filepath)
 
     if channel_map is not None and wfs_to_load is not None:
         raise ValueError("Provide either 'channel_map' or 'wfs_to_load', not both.")
@@ -202,27 +208,31 @@ def load_xenodaq_run(
             wfs_to_load = _channel_map_to_wfs_to_load(json_map)
             print(f"Loaded waveforms from JSON ChsMap: {wfs_to_load}")
         else:
-            wfs_to_load = detect_waveforms(rootfile_path)
+            wfs_to_load = detect_waveforms(rootfile_paths[0])
             print(f"No JSON ChsMap found — auto-detected waveforms: {wfs_to_load}")
 
     wfs = {}
     wfs_df = {}
 
-    with uproot.open(rootfile_path) as rootfile:
-        for dig_n in wfs_to_load.keys():
-            tree = rootfile[f'dig_{dig_n}']
+    for rootfile_path in rootfile_paths:
 
-            # Load metadata
-            evcounters = tree[f"EvCounter_{dig_n}"].array(library="np").astype(np.uint32)
-            ttts = tree[f"TimeTrigTag_{dig_n}"].array(library="np").astype(np.uint32)
-            runtimes = tree["RunTime"].array(library="np").astype(np.float32) if 'RunTime' in tree.keys() else None
+        with uproot.open(rootfile_path) as rootfile:
+            print(f"Loading File {rootfile_path}")
+            for dig_n in wfs_to_load.keys():
+                tree = rootfile[f'dig_{dig_n}']
 
-            # Load waveforms
-            for wf_name in wfs_to_load[dig_n]:
-                wfs[wf_name] = tree[wf_name].array(library="np").astype(np.uint32)
-                wfs_df[f'{wf_name}_evid'] = evcounters
-                wfs_df[f'{wf_name}_ttt'] = ttts
-                wfs_df[f'{wf_name}_rt'] = runtimes
+                # Load metadata
+                evcounters = tree[f"EvCounter_{dig_n}"].array(library="np").astype(np.uint32)
+                ttts = tree[f"TimeTrigTag_{dig_n}"].array(library="np").astype(np.uint32)
+                runtimes = tree["RunTime"].array(library="np").astype(np.float32) if 'RunTime' in tree.keys() else None
+            
+                # Load waveforms
+                for wf_name in wfs_to_load[dig_n]:
+                    wfs.setdefault(wf_name, []).append(tree[wf_name].array(library="np").astype(np.uint32))
+                    wfs_df.setdefault(f'{wf_name}_evid', []).append(evcounters)
+                    wfs_df.setdefault(f'{wf_name}_ttt', []).append(ttts)
+                    wfs_df.setdefault(f'{wf_name}_rt', []).append(runtimes)
+
 
     wfs_df = pd.DataFrame(wfs_df)
 
