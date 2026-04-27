@@ -7,6 +7,7 @@ produced by the FMCDAQ system with multiple digitizers.
 import re
 import numpy as np
 import uproot
+import gc
 import pandas as pd
 from pathlib import Path
 from glob import glob
@@ -63,20 +64,6 @@ def find_datasets(
     Scan a data directory and return datasets matching the given filters.
     Filters are applied to the Description field inside each dataset's JSON.
 
-    Parameters
-    ----------
-    datadir : str
-        Base directory containing dataset subfolders.
-    date : str, optional
-        Date prefix filter (e.g. '20260414'). Only subfolders whose name
-        starts with this string are considered.
-    bv : str, optional
-        Bias voltage filter (e.g. '50V' or '50'). Matches the BV field
-        in the JSON description.
-    led : str, optional
-        LED voltage filter (e.g. '5V' or '5'). Matches the LED field
-        in the JSON description.
-
     Returns
     -------
     list of dict
@@ -131,10 +118,6 @@ def load_xenodaq_run(
     2. Loads all waveforms from the ROOT file
     3. Maps waveforms to physical tile names
 
-    Parameters
-    ----------
-    dataset : str
-        Dataset name (e.g., '20260226_160258')
     datadir : str, default 'datasets'
         Base directory containing datasets
     filenumbers : list, default 0
@@ -160,20 +143,6 @@ def load_xenodaq_run(
     tiles : dict or None
         Tile-mapped data ``{tile_name: {'waveforms': ..., 'evid': ..., ...}}``.
         None when ``wfs_to_load`` is given explicitly (raw mode).
-
-    Examples
-    --------
-    >>> # Simple: one call does everything
-    >>> wfs, df, tiles = load_xenodaq_run('20260414_180123',
-    ...                                    datadir='/disk/gfs_atp/xenoscope/Run6/LED')
-    >>> print(tiles['tile_A']['waveforms'].shape)
-
-    >>> # custom channel map
-    >>> wfs, df, tiles = load_xenodaq_run('20260414_180123', channel_map=my_map)
-
-    >>> # choose specific waveforms (no tile mapping)
-    >>> wfs, df, _ = load_xenodaq_run('20260414_180123',
-    ...                                wfs_to_load={"0": ["wf0"]})
     """
     dirpath = Path(datadir) / dataset
     ds_flist = glob(str(dirpath / "*.root"))
@@ -215,23 +184,26 @@ def load_xenodaq_run(
     wfs_df = {}
 
     for rootfile_path in rootfile_paths:
-
         with uproot.open(rootfile_path) as rootfile:
             print(f"Loading File {rootfile_path}")
             for dig_n in wfs_to_load.keys():
                 tree = rootfile[f'dig_{dig_n}']
+                branches = wfs_to_load[dig_n]
+                meta_branches = [f"EvCounter_{dig_n}", f"TimeTrigTag_{dig_n}"]
+                if 'RunTime' in tree.keys():
+                    meta_branches.append("RunTime")
 
-                # Load metadata
-                evcounters = tree[f"EvCounter_{dig_n}"].array(library="np").astype(np.uint32)
-                ttts = tree[f"TimeTrigTag_{dig_n}"].array(library="np").astype(np.uint32)
-                runtimes = tree["RunTime"].array(library="np").astype(np.float32) if 'RunTime' in tree.keys() else None
-            
-                # Load waveforms
-                for wf_name in wfs_to_load[dig_n]:
-                    wfs.setdefault(wf_name, []).append(tree[wf_name].array(library="np").astype(np.uint32))
-                    wfs_df.setdefault(f'{wf_name}_evid', []).append(evcounters)
-                    wfs_df.setdefault(f'{wf_name}_ttt', []).append(ttts)
-                    wfs_df.setdefault(f'{wf_name}_rt', []).append(runtimes)
+                for batch in tree.iterate(branches + meta_branches, step_size=50, library="np"):
+                    evcounters = batch[f"EvCounter_{dig_n}"].astype(np.uint32)
+                    ttts       = batch[f"TimeTrigTag_{dig_n}"].astype(np.uint32)
+                    runtimes   = batch["RunTime"].astype(np.float32) if "RunTime" in batch else None
+
+                    for wf_name in branches:
+                        arr = batch[wf_name].astype(np.uint32)
+                        wfs.setdefault(wf_name, []).append(arr)
+                        wfs_df.setdefault(f'{wf_name}_evid', []).append(evcounters)
+                        wfs_df.setdefault(f'{wf_name}_ttt',  []).append(ttts)
+                        wfs_df.setdefault(f'{wf_name}_rt',   []).append(runtimes)
 
 
     wfs_df = pd.DataFrame(wfs_df)
@@ -244,6 +216,71 @@ def load_xenodaq_run(
 
     return wfs, wfs_df, tiles
 
+
+def average_xenodaq_run(
+    dataset: str,
+    datadir: str = 'datasets',
+    filenumbers: Optional[List[int]] = None,
+    batch_size: int = 50,
+) -> Dict[str, np.ndarray]:
+    """
+    Memory-efficient averaged waveform loader across multiple ROOT files.
+
+    Returns
+    -------
+    dict
+        {wf_name: avg_waveform (n_samples,)}
+    """
+    filenums = filenumbers if filenumbers is not None else get_all_filenumbers(dataset, datadir)
+    dirpath  = Path(datadir) / dataset
+    ds_flist = glob(str(dirpath / "*.root"))
+
+    wfs_to_load = detect_waveforms(ds_flist[0])
+
+    running_sum   = {}
+    running_count = {}
+
+    for filenum in filenums:
+        suffix = f"_{filenum:04d}.root"
+        paths  = [f for f in ds_flist if f.endswith(suffix)]
+        if not paths:
+            print(f"  file {filenum} not found, skipping")
+            continue
+
+        print(f"  Reading file {filenum}...")
+        with uproot.open(paths[0]) as rootfile:
+            for dig_n, branches in wfs_to_load.items():
+                tree = rootfile[f'dig_{dig_n}']
+                for batch in tree.iterate(branches, step_size=batch_size, library="np"):
+                    for wf_name in branches:
+                        arr = batch[wf_name].astype(np.float64)
+                        if wf_name not in running_sum:
+                            running_sum[wf_name]   = np.zeros(arr.shape[1], dtype=np.float64)
+                            running_count[wf_name] = 0
+                        running_sum[wf_name]   += arr.sum(axis=0)
+                        running_count[wf_name] += arr.shape[0]
+        gc.collect()
+
+    averaged = {wf: running_sum[wf] / running_count[wf] for wf in running_sum}
+    total_events = list(running_count.values())[0]
+    print(f"Done — averaged {total_events} events across {len(filenums)} file(s)")
+    return averaged
+
+def get_all_filenumbers(dataset: str, datadir: str = 'datasets') -> List[int]:
+    """
+    Scan a dataset directory and return all available ROOT file numbers.
+    -------
+    list of int
+        Sorted list of file numbers found (e.g. [0, 1, 2])
+    """
+    dirpath = Path(datadir) / dataset
+    root_files = glob(str(dirpath / "*.root"))
+    numbers = []
+    for f in root_files:
+        match = re.search(r'_(\d{4})\.root$', f)
+        if match:
+            numbers.append(int(match.group(1)))
+    return sorted(numbers)
 
 def detect_waveforms(rootfile_path: str) -> Dict[str, List[str]]:
     """
