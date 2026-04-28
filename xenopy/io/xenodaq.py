@@ -196,7 +196,7 @@ def load_xenodaq_run(
                 for batch in tree.iterate(branches + meta_branches, step_size=50, library="np"):
                     evcounters = batch[f"EvCounter_{dig_n}"].astype(np.uint32)
                     ttts       = batch[f"TimeTrigTag_{dig_n}"].astype(np.uint32)
-                    runtimes   = batch["RunTime"].astype(np.float32) if "RunTime" in batch else None
+                    runtimes = batch["RunTime"].astype(np.float32) if "RunTime" in batch else np.full(len(evcounters), np.nan, dtype=np.float32)
 
                     for wf_name in branches:
                         arr = batch[wf_name].astype(np.uint32)
@@ -205,6 +205,8 @@ def load_xenodaq_run(
                         wfs_df.setdefault(f'{wf_name}_ttt',  []).append(ttts)
                         wfs_df.setdefault(f'{wf_name}_rt',   []).append(runtimes)
 
+    wfs = {k: np.concatenate(v, axis=0) for k, v in wfs.items()}
+    wfs_df = {k: np.concatenate(v, axis=0) for k, v in wfs_df.items()}
 
     wfs_df = pd.DataFrame(wfs_df)
 
