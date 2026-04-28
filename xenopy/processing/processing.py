@@ -68,6 +68,9 @@ def process_config(dataset, datadir, filenumber=0):
     # Load waveforms
     wfs, wfs_df, tiles = load_xenodaq_run(dataset, datadir, [filenumber])
 
+    tile_keys = ['tile_A', 'tile_B', 'tile_C', 'tile_D', 'tile_E', 'tile_F', 'tile_G', 'tile_H', 'tile_J', 'tile_K', 'tile_L', 'tile_M']
+    {k: v for k, v in wfs.items() if k not in tile_keys or k in wfs}
+
     gain = {key for key in tiles.keys()}
 
     ## Apply gain! -> skip this during shifter checks, just set all to 1
@@ -88,18 +91,20 @@ def process_config(dataset, datadir, filenumber=0):
     # gain["mod0"]["wf6"] = 1
     # gain["mod0"]["wf7"] = 1
 
-    gain = {key: 1 for key in tiles}
+    gain = {key: 1 for key in tiles.keys()}
 
     baseline, _ = get_avgbaseline_all_channels(tiles)
 
     data_baselinecorrected = {
         key: (baseline[key] - np.array(tiles[key]["waveforms"])[:, :])/gain[key]  
         for key in tiles.keys()}
+    
 
+    ## sum only tiles and not muons!
     summed_channels = np.sum(
         np.stack([
             data_baselinecorrected[key]
-            for key in data_baselinecorrected.keys()
+            for key in tile_keys
             ], axis=0),  # Stack along a new axis: [n_wf_total, n_events, waveform_len]
         axis=0       # Sum over mod+wf → result shape: [n_events, waveform_len]
     )
