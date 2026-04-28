@@ -21,12 +21,11 @@ def get_baseline_channel(wf):
     return baselines, std
 
 def get_avgbaseline_all_channels(wfs):
-    avg_baselines = {key for key in wfs}
-    avg_stds = {key for key in wfs}
+    avg_baselines = {key: [] for key in wfs}
+    avg_stds = {key: [] for key in wfs}
 
     for key in wfs.keys():
-        _baselines, _stds = get_baseline_channel(wfs[key])  
-
+        _baselines, _stds = get_baseline_channel(np.array(wfs[key]["waveforms"])) 
         avg_baselines[key] = np.median(_baselines)
         avg_stds[key] = np.std(_baselines)/len(_baselines)*1.253 # unsure how true this is...
 
@@ -54,7 +53,7 @@ def bin_multiple_waveforms(arr, factor):
 
 ###### Process Multiple Files ######
 
-def process_config(date, datadir):
+def process_config(dataset, datadir, filenumber=0):
     """
     Processes a single muon coincidence file by subtracting the baseline and summing all channels for each event.
     Returns an array containing the summed signal per event.
@@ -67,8 +66,8 @@ def process_config(date, datadir):
     
     
     # Load waveforms
-    wfs, wfs_df, tiles = load_xenodaq_run(date, datadir)
-    
+    wfs, wfs_df, tiles = load_xenodaq_run(dataset, datadir, [filenumber])
+
     gain = {key for key in tiles.keys()}
 
     ## Apply gain! -> skip this during shifter checks, just set all to 1
@@ -94,7 +93,7 @@ def process_config(date, datadir):
     baseline, _ = get_avgbaseline_all_channels(tiles)
 
     data_baselinecorrected = {
-        key: (baseline[key] - tiles[key][:, :])/gain[key]  
+        key: (baseline[key] - np.array(tiles[key]["waveforms"])[:, :])/gain[key]  
         for key in tiles.keys()}
 
     summed_channels = np.sum(
@@ -115,14 +114,15 @@ def process_config(date, datadir):
 
 
 
-def process_multiple_files(file_list, channels=False, rebin=False):
+def process_multiple_files(dataset, datadir, filenumbers, channels=False, rebin=False):
     """
     Processes multiple files by computing the average waveform for all events
     across all summed channels with subtracted baseline. Returns the result as an array.
     
     Args:
-        file_list (list of str): List of input file names. Files must be located 
-            in the 'filling' folder and begin with 'mucoin'.
+        file_list (list of str): List of input file names. 
+        datadir (str): Directory where the files are saved
+        filenumbers (list[int]): 
         expectedS2Window (list of float): The expected time window for 
             S2 arrival, specified as [min, max].
         channel (boolean): if True keep raw waveforms of single channels and baseline and time
@@ -133,8 +133,9 @@ def process_multiple_files(file_list, channels=False, rebin=False):
 
     summed_channels = []
 
-    for i,run_name in enumerate(file_list):
-        summed_channel, single_channel, baseline = process_config(run_name) 
+    ##
+    for i, filenumber in enumerate(filenumbers):
+        summed_channel, single_channel, baseline = process_config(dataset, datadir, filenumber) 
         single_channel = ak.Array(single_channel)
       
         if i == 0:
@@ -320,7 +321,7 @@ def getMaxChannel(single_channels, start, end):
     return maxChannel
     
 
-def processEvents(filelist):
+def processEvents(dataset, datadir, filenumbers):
     """
     Full processing of events with pusle finder tuned for muon events
 
@@ -331,7 +332,7 @@ def processEvents(filelist):
     """
     merge = True
     
-    summed_channels, single_channels, baseline = process_multiple_files(filelist, channels=True, rebin=False)
+    summed_channels, single_channels, baseline = process_multiple_files(dataset, datadir, filenumbers, channels=True, rebin=False)
 
     pulses = []
     
