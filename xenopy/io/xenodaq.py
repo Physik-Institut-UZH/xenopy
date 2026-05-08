@@ -224,23 +224,50 @@ def average_xenodaq_run(
     datadir: str = 'datasets',
     filenumbers: Optional[List[int]] = None,
     batch_size: int = 50,
-) -> Dict[str, np.ndarray]:
+    channel_map: Optional[Dict] = None,
+) -> Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray]]:
     """
     Memory-efficient averaged waveform loader across multiple ROOT files.
 
+    Parameters
+    ----------
+    channel_map : dict, optional
+        Custom ChsMap dict mapping tile names to DAQ locations.
+        If None, loads the channel map from the dataset JSON.
+        If no JSON map is found either, falls back to raw wf names.
+
     Returns
     -------
-    dict
-        {wf_name: avg_waveform (n_samples,)}
+    averaged : dict
+        {tile_name: avg_waveform (n_samples,)}
+    std : dict
+        {tile_name: std_waveform (n_samples,)} — sample std across all events
+    Usage 
+    -----
+    averaged, std = pi.average_xenodaq_run('my_dataset')
+    averaged['tile_A']  
     """
     filenums = filenumbers if filenumbers is not None else get_all_filenumbers(dataset, datadir)
     dirpath  = Path(datadir) / dataset
     ds_flist = glob(str(dirpath / "*.root"))
 
-    wfs_to_load = detect_waveforms(ds_flist[0])
+    # Resolve channel map from json 
+    if channel_map is None:
+        channel_map = load_channel_map(dataset, datadir)
 
-    running_sum   = {}
-    running_count = {}
+    if channel_map is not None:
+        wfs_to_load = _channel_map_to_wfs_to_load(channel_map)
+        wf_to_tile = {loc['channel']: tile for tile, loc in channel_map.items()
+                      if loc.get('channel') is not None}
+        print(f"Loaded channel map: {wf_to_tile}")
+    else:
+        wfs_to_load = detect_waveforms(ds_flist[0])
+        wf_to_tile = None
+        print("No channel map found — using raw waveform names")
+
+    running_sum    = {}
+    running_sum_sq = {}
+    running_count  = {}
 
     for filenum in filenums:
         suffix = f"_{filenum:04d}.root"
@@ -257,16 +284,28 @@ def average_xenodaq_run(
                     for wf_name in branches:
                         arr = batch[wf_name].astype(np.float64)
                         if wf_name not in running_sum:
-                            running_sum[wf_name]   = np.zeros(arr.shape[1], dtype=np.float64)
-                            running_count[wf_name] = 0
-                        running_sum[wf_name]   += arr.sum(axis=0)
-                        running_count[wf_name] += arr.shape[0]
+                            running_sum[wf_name]    = np.zeros(arr.shape[1], dtype=np.float64)
+                            running_sum_sq[wf_name] = np.zeros(arr.shape[1], dtype=np.float64)
+                            running_count[wf_name]  = 0
+                        running_sum[wf_name]    += arr.sum(axis=0)
+                        running_sum_sq[wf_name] += (arr ** 2).sum(axis=0)
+                        running_count[wf_name]  += arr.shape[0]
         gc.collect()
 
     averaged = {wf: running_sum[wf] / running_count[wf] for wf in running_sum}
+    std = {
+        wf: np.sqrt(running_sum_sq[wf] / running_count[wf] - averaged[wf] ** 2)
+        for wf in running_sum
+    }
+
+    # Remap wf names to tile names if a channel map is available
+    if wf_to_tile is not None:
+        averaged = {wf_to_tile.get(wf, wf): v for wf, v in averaged.items()}
+        std      = {wf_to_tile.get(wf, wf): v for wf, v in std.items()}
+
     total_events = list(running_count.values())[0]
     print(f"Done — averaged {total_events} events across {len(filenums)} file(s)")
-    return averaged
+    return averaged, std
 
 def get_all_filenumbers(dataset: str, datadir: str = 'datasets') -> List[int]:
     """
