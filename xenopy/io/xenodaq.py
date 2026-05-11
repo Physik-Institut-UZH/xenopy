@@ -154,6 +154,9 @@ def load_xenodaq_run(
     for num in filenumbers:
         suffix = f"_{num:04d}.root"
         filepath = [f for f in ds_flist if f.endswith(suffix)]
+        if len(filepath) == 0:
+            print(f"Filenumber {num} does not exist.")
+            continue
         rootfile_paths.extend(filepath)
 
     if channel_map is not None and wfs_to_load is not None:
