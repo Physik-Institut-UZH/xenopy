@@ -2,6 +2,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.gridspec import GridSpec
 from typing import Optional
+import matplotlib.cm as cm
+
 
 
 def plot_waveform(waveform_array: np.ndarray, full_y: bool | tuple[float, float] = False,
@@ -76,15 +78,16 @@ def plot_all_tiles_average(tiles: dict, title: str = '') -> plt.Figure:
     """
     tile_names = sorted(tiles.keys())
     fig, ax = plt.subplots(figsize=(7, 4))
-
-    for tile in tile_names:
+    colors = [cm.tab20(i) for i in range(len(tile_names))]
+    
+    for tile, color in zip(tile_names, colors):
         wf = tiles[tile]["waveforms"].mean(axis=0)
         x = np.arange(len(wf))
-        ax.plot(x, wf, label=f'Tile {tile.replace("tile_", "").upper()}', alpha=0.8)
+        ax.plot(x, wf, color = color, label=f'Tile {tile.replace("tile_", "").upper()}', alpha=0.8)
 
     ax.set_xlabel(r'$\mathrm{Sample~number}$')
     ax.set_ylabel(r'$\mathrm{ADC~counts}$')
-    ax.legend(loc='best', ncol=3, frameon=True)
+    ax.legend(loc = "best", ncol=2, frameon=True)
 
     if title:
         ax.set_title(title, fontsize=12)

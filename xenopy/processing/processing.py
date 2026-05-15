@@ -5,6 +5,7 @@ from scipy.ndimage import gaussian_filter1d
 import csv
 from xenopy.io import load_xenodaq_run, print_file_structure
 from matplotlib.gridspec import GridSpec
+import json
 
 
 # ------------- Input Data Processing ------------- #
@@ -69,29 +70,22 @@ def process_config(dataset, datadir, filenumbers=[0]):
     wfs, wfs_df, tiles = load_xenodaq_run(dataset, datadir, filenumbers)
 
     tile_keys = ['tile_A', 'tile_B', 'tile_C', 'tile_D', 'tile_E', 'tile_F', 'tile_G', 'tile_H', 'tile_J', 'tile_K', 'tile_L', 'tile_M']
-    {k: v for k, v in wfs.items() if k not in tile_keys or k in wfs}
-
-    gain = {key for key in tiles.keys()}
 
     ## Apply gain! -> skip this during shifter checks, just set all to 1
     ## needs reimplementing for new daq
-    # gain = {"mod0":{}, "mod1":{}}
-    # with open("/home/lze/rhampp/XenoscopeAnalysis/LED/gains.txt", "r") as f:
-    #     reader = csv.DictReader(f)
-    #     for row in reader:
-    #         group = row['group']
-    #         wf = row['wf']
-    #         gain_ = float(row['gain'])
+    gain = {}
+    with open("/home/lze/rhampp/Xenoscope/processed/LED/gain_20260508.json", "r") as f:
+        gain_json = json.load(f)
+        
+        for key in tile_keys:
+            gain[key] = gain_json[key]["SPE"]
+    
+    # Set muon panel scintillator triggers to gain 1
+    gain["muon1"] = 1
+    gain["muon2"] = 1
+    gain["muon3"] = 1
 
-    #         if group not in gain:
-    #             gain[group] = {}
-    #         gain[group][wf] = gain_ 
-
-    # # Set muon panel scintillator triggers to 1
-    # gain["mod0"]["wf6"] = 1
-    # gain["mod0"]["wf7"] = 1
-
-    gain = {key: 1 for key in tiles.keys()}
+    # gain = {key: 1 for key in tiles.keys()}
 
     baseline, _ = get_avgbaseline_all_channels(tiles)
 
@@ -140,7 +134,7 @@ def DoGPulseFinder(rawWf):
     # potnteial Peaks: first derivative around 0 and second < zero
     # Why not exactly zero? won't have the value == 0 in the array but close to zero!
     # filteredWf has to be lower then -25 to reduce noise!
-    scaling = 1000 # since the waveforms are not gain corrected anymore rescale the factors (gain ~O(1000))
+    scaling = 1 # since the waveforms are not gain corrected anymore rescale the factors (gain ~O(1000))
     potentialBoundaries = np.where((np.abs(derivative1) < 0.0001*scaling) & (derivative2 > 0) & (filteredWf < -0.5*scaling))[0]
     potentialPeaks = np.where((np.abs(derivative1) < 0.001*scaling) & (derivative2 < 0) & (rawWf > 5*scaling))[0]
 
@@ -451,8 +445,9 @@ def cut_rqs(pulses):
 
 
 def triggerSelection(data):
+
     maskmuon1 = np.any(data["singleChannels"]["muon1"][:,200:300] > 100, axis = 1)
-    maskmuon2 = np.any(data["singleChannels"]["muon2"][:,200:300]  > 100, axis = 1)
+    maskmuon2 = np.any(data["singleChannels"]["muon2"][:,200:300] > 100, axis = 1)
 
     return data[(maskmuon1 & maskmuon2)]
 

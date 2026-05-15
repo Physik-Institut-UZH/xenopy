@@ -154,7 +154,7 @@ def calculate_gain(fit_result: dict,
     """ Calculates the gain based on the 1PE peak """
 
     spe_corrected_area = fit_result["mean_1pe"] - fit_result["mean_0pe"]
-    spe_sigma = np.sqrt(fit_result[f"sigma_0pe"]**2  + fit_result[f"sigma_1pe"]**2)
+    spe_sigma = np.sqrt(fit_result["fit_0pe"]["cov"][1,1] + fit_result["fit_1pe"]["cov"][1,1])
     gain = (ADC_range * spe_corrected_area * 1e-9 / ADC_impedance / F_amp /
             ADC_res / q_e)
     sigma = (ADC_range * spe_sigma * 1e-9 / ADC_impedance / F_amp /
