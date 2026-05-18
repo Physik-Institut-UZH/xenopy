@@ -1,3 +1,4 @@
+import json
 import matplotlib.pyplot as plt
 import numpy as np
 import awkward as ak
@@ -11,13 +12,15 @@ from matplotlib.gridspec import GridSpec
 
 ###### Baselines ######
 
-def get_baseline_channel(wf):
-    """ average of first 50 samples, then median over all events in data_dict """
-
-    wf_initial = wf[:, 50:100] # get baseline from 50 samples (trigger at 200)
-    baselines = np.average(wf_initial, axis = 1) # changed this to average, and then take the median over events! ( basically super noise events ( events where something happens) will not determine the baseline!)
+def get_baseline_channel(wf, baseline_start=50, baseline_end=100):
+    """
+    Compute per-event baseline and std from a 2D waveform array.
+    
+    """
+    wf_initial = wf[:, baseline_start:baseline_end]
+    baselines = np.average(wf_initial, axis=1)
     assert len(baselines) == wf_initial.shape[0]
-    std = np.std(wf_initial, axis = 1)
+    std = np.std(wf_initial, axis=1)
     return baselines, std
 
 def get_avgbaseline_all_channels(wfs):
@@ -30,6 +33,30 @@ def get_avgbaseline_all_channels(wfs):
         avg_stds[key] = np.std(_baselines)/len(_baselines)*1.253 # unsure how true this is...
 
     return avg_baselines, avg_stds
+
+
+###### PE Conversion ######
+
+def convert_to_pe(waveforms, gain_file):
+    """Convert waveforms to PE units using a gain JSON file.
+
+    Args:
+        waveforms (dict): accepts tiles as returned by ``load_xenodaq_run``
+        gain_file (str): Path to a JSON file with gain data.
+
+    Returns:
+        dict: ``{channel: array}`` with waveforms in PE units.
+    """
+    with open(gain_file, 'r') as f:
+        gain_data = json.load(f)
+    waveforms_pe = {}
+    for channel, data in waveforms.items():
+        if channel in gain_data:
+            spe = gain_data[channel]['SPE']
+            waveforms_pe[channel] = -np.array(data['waveforms']) / spe
+        else:
+            print(f"Warning: no gain data for {channel}")
+    return waveforms_pe
 
 
 ###### Rebin ######
