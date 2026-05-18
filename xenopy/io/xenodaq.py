@@ -154,6 +154,9 @@ def load_xenodaq_run(
     for num in filenumbers:
         suffix = f"_{num:04d}.root"
         filepath = [f for f in ds_flist if f.endswith(suffix)]
+        if len(filepath) == 0:
+            print(f"Filenumber {num} does not exist.")
+            continue
         rootfile_paths.extend(filepath)
 
     if channel_map is not None and wfs_to_load is not None:
@@ -209,7 +212,6 @@ def load_xenodaq_run(
     wfs_df = {k: np.concatenate(v, axis=0) for k, v in wfs_df.items()}
 
     wfs_df = pd.DataFrame(wfs_df)
-
     # Map to tiles automatically (unless raw mode)
     tiles = None
     if tile_map is not None and not raw_mode:
@@ -546,4 +548,67 @@ def map_channels_to_tiles(
             'tree': tree,
             'channel': channel,
         }
+    return tiles
+
+def load_led_sequence(
+    datasets: List[str],
+    led_tile_map: Dict[str, str],
+    datadir: str = 'datasets',
+) -> Dict:
+    """
+    Load a full LED calibration sequence, mapping each tile to the correct
+    dataset based on LED voltage from the dataset JSON Description.
+
+    Parameters
+    ----------
+    datasets : list of str
+        List of dataset folder names in the sequence
+    led_tile_map : dict
+        Mapping of tile name to required LED voltage e.g. {"tile_A": "3.2V"}
+    datadir : str
+        Base directory containing datasets
+
+    Returns
+    -------
+    tiles : dict
+        ``{tile_name: {'waveforms': ndarray, 'evid': ..., 'ttt': ...,
+                       'tree': str, 'channel': str, 'led': str}}``
+    """
+    # Step 1: read LED voltage from each dataset's JSON
+    dataset_led = {}
+    for dataset in datasets:
+        dirpath = Path(datadir) / dataset
+        json_files = list(dirpath.glob("*.json"))
+        if not json_files:
+            raise FileNotFoundError(f"No JSON found in {dirpath}")
+        with open(json_files[0]) as f:
+            config = json.load(f)
+        led_voltage = config["Description"]["LED"]
+        dataset_led[dataset] = led_voltage
+        print(f"{dataset} → LED {led_voltage}")
+
+    # Step 2: for each tile, find the matching dataset and load it
+    tiles = {}
+    loaded_datasets = {}  # cache so we don't reload the same dataset twice
+
+    for tile_name, required_led in led_tile_map.items():
+        matching = [ds for ds, led in dataset_led.items() if led == required_led]
+        if not matching:
+            print(f"Warning: no dataset found for {tile_name} (LED={required_led}), skipping")
+            continue
+        dataset = matching[0]
+
+        if dataset not in loaded_datasets:
+            _, _, tile_data = load_xenodaq_run(dataset, datadir=datadir)
+            loaded_datasets[dataset] = tile_data
+
+        tile_data = loaded_datasets[dataset]
+        if tile_data is None or tile_name not in tile_data:
+            print(f"Warning: {tile_name} not found in {dataset}, skipping")
+            continue
+
+        tiles[tile_name] = tile_data[tile_name]
+        tiles[tile_name]['led'] = required_led
+
+    print(f"Loaded {len(tiles)} tiles: {sorted(tiles.keys())}")
     return tiles
