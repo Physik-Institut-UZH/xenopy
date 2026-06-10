@@ -32,6 +32,18 @@ def get_avgbaseline_all_channels(wfs):
 
     return avg_baselines, avg_stds
 
+def baseline_correction(tiles):
+    """Apply to baseline correction to tiles array from loading function"""
+
+    gain = {key: 1 for key in tiles}
+
+    baseline, _ = get_avgbaseline_all_channels(tiles)
+
+    data_baselinecorrected = {
+        key: (baseline[key] - np.array(tiles[key]["waveforms"])[:, :])/gain[key]  
+        for key in tiles.keys()}
+
+    return data_baselinecorrected
 
 ###### Rebin ######
 
@@ -135,7 +147,7 @@ def DoGPulseFinder(rawWf):
     # Why not exactly zero? won't have the value == 0 in the array but close to zero!
     # filteredWf has to be lower then -25 to reduce noise!
     scaling = 1 # since the waveforms are not gain corrected anymore rescale the factors (gain ~O(1000))
-    potentialBoundaries = np.where((np.abs(derivative1) < 0.0001*scaling) & (derivative2 > 0) & (filteredWf < -0.5*scaling))[0]
+    potentialBoundaries = np.where((np.abs(derivative1) < 0.001*scaling) & (derivative2 > 0) & (filteredWf < -0.5*scaling))[0]
     potentialPeaks = np.where((np.abs(derivative1) < 0.001*scaling) & (derivative2 < 0) & (rawWf > 5*scaling))[0]
 
     if len(potentialBoundaries) == 0:
@@ -175,11 +187,11 @@ def mergePulses(rawWf, starts, ends, peaks):
     current_peak = peaks[0]
     for i in range(0,len(starts)-1):
         next_peak = peaks[i+1]
-        scaling = 1000 # also add scaling here because no gain used
+        scaling = 1 # remove scaling as gains are applied
         if ak.any(rawWf[current_peak:next_peak] < (max([rawWf[current_peak],rawWf[next_peak]])/10/scaling)):# or ((next_peak- current_start) > 10000): # maybe make this better?
             final_starts.append(current_start)
             final_ends.append(ends[i])
-            final_peaks.append(current_peak)
+            final_peaks.append(np.argmax(rawWf[current_start:ends[i]]) + current_start )
             current_start = starts[i+1]
             current_peak = peaks[i+1]
         else:
@@ -401,7 +413,6 @@ def processEvents(dataset, datadir, filenumbers):
 def processEventsFromMultipleFiles(datasets, datadir, filenumbersLists):
 
     pulses = []
-    start = 0
     for dataset, filenumbers in zip(datasets, filenumbersLists):
         print(f"Processing dataset {dataset}")
         pulses_tmp = processEvents(dataset, datadir, filenumbers)
@@ -450,6 +461,12 @@ def triggerSelection(data):
     maskmuon2 = np.any(data["singleChannels"]["muon2"][:,200:300] > 100, axis = 1)
 
     return data[(maskmuon1 & maskmuon2)]
+
+def anitMuonVeto(data):
+
+    maskmuon3 = np.any(data["singleChannels"]["muon3"] > 100, axis = 1)
+
+    return data[(not maskmuon3)]
 
 
 def data_selection(pulses):
