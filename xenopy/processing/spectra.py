@@ -69,7 +69,7 @@ def fit_spectrum(charge: np.ndarray,
 
     # search near zero by default 
     if window_0pe is None:
-        z0, z1 = max(-150.0, range[0]), min(150.0, range[1])
+        z0, z1 = max(-50.0, range[0]), min(50.0, range[1])
         m = (bin_centers >= z0) & (bin_centers <= z1)
         peak0_guess = float(bin_centers[np.where(m)[0][int(np.argmax(hist[m]))]]) if np.any(m) and np.max(hist[m]) > 0 else 0.0
         halfw0 = max(40.0, 0.05 * span)

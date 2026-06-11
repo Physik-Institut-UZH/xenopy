@@ -6,6 +6,9 @@ import csv
 from xenopy.io import load_xenodaq_run, print_file_structure
 from matplotlib.gridspec import GridSpec
 import json
+import os
+import glob
+from datetime import datetime
 
 
 # ------------- Input Data Processing ------------- #
@@ -64,6 +67,35 @@ def bin_multiple_waveforms(arr, factor):
     return arr.reshape(n_rows, n_bins, factor).sum(axis=2)
 
 
+def load_gain(dataset):
+    """
+    Loads the gain file of the day / closest in date
+    Returns a dict with the gains and the path to the used gain file
+    """
+
+    gain = {}
+    tile_keys = ['tile_A', 'tile_B', 'tile_C', 'tile_D', 'tile_E', 'tile_F',
+                  'tile_G', 'tile_H', 'tile_J', 'tile_K', 'tile_L', 'tile_M']
+    
+    gain_directory = "/disk/gfs_atp/xlzd/xenoscope/proc_data/Run6/LED/gains/"
+    date_str = dataset.split("_")[0]
+    date_target = datetime.strptime(date_str, "%Y%m%d") 
+    
+    gain_files = glob.glob(os.path.join(gain_directory, "gain_*.json"))
+    if not gain_files:
+        raise FileNotFoundError(f"No gain files found in {gain_directory}")
+    
+    gain_file = min(gain_files,
+        key=lambda f: abs(datetime.strptime(os.path.basename(f), "gain_%Y%m%d.json") - date_target))
+
+    with open(gain_file, "r") as f:
+        gain_json = json.load(f)
+        print(gain_json)
+        for key in tile_keys:
+            gain[key] = gain_json[key]["SPE"] - gain_json[key]["Pedestal"]
+
+    return gain, gain_file
+
 ###### Process Multiple Files ######
 
 def process_config(dataset, datadir, filenumbers=[0]):
@@ -81,16 +113,11 @@ def process_config(dataset, datadir, filenumbers=[0]):
     # Load waveforms
     wfs, wfs_df, tiles = load_xenodaq_run(dataset, datadir, filenumbers)
 
-    tile_keys = ['tile_A', 'tile_B', 'tile_C', 'tile_D', 'tile_E', 'tile_F', 'tile_G', 'tile_H', 'tile_J', 'tile_K', 'tile_L', 'tile_M']
+    tile_keys = ['tile_A', 'tile_B', 'tile_C', 'tile_D', 'tile_E', 'tile_F',
+                  'tile_G', 'tile_H', 'tile_J', 'tile_K', 'tile_L', 'tile_M']
 
-    ## Apply gain! -> skip this during shifter checks, just set all to 1
-    ## needs reimplementing for new daq
-    gain = {}
-    with open("/home/lze/rhampp/Xenoscope/processed/LED/gain_20260508.json", "r") as f:
-        gain_json = json.load(f)
-        
-        for key in tile_keys:
-            gain[key] = gain_json[key]["SPE"]
+    ## Load gain file closest in time
+    gain, _ = load_gain(dataset)
     
     # Set muon panel scintillator triggers to gain 1
     gain["muon1"] = 1
@@ -406,6 +433,11 @@ def processEvents(dataset, datadir, filenumbers):
             "peaktime_us": (starts_sorted - peaks_sorted) / 100,
         })
     
+    _, gain_file = load_gain(dataset)
+    # Attach gain file as metadata on each event
+    for pulse in pulses:
+        pulse["gainFile"] = gain_file
+
     pulses = ak.Array(pulses)
     return pulses
 
