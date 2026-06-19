@@ -100,14 +100,24 @@ def load_gain(dataset):
     return gain, gain_file
 
 
-def save_processed_waveforms(filename, outputdir, waveforms, metadata):
+def save_processed_waveforms(dataset, outputdir, filenumbers, waveforms, metadata):
 
     """ Save the processed waveforms stored in an awkward array in a new root file
     Args:
         filename [string]: name of the outputfile
+        outputdir [string]: name of the output directory
+        filenumbers [List]: list of processed filenumebrs
         waveforms [ak.Array]: array with the single waveforms, summed waveform and event id
         metadata [ak.Array]: array with the metadata to be saved
     """
+
+    outputdir = os.path.join(outputdir, dataset)
+    os.makedirs(outputdir, exist_ok=True)
+
+    if len(filenumbers) > 1:
+        filename = dataset
+    else:
+        filename = dataset + f"_{int(filenumbers[0]):04d}"
 
     with uproot.recreate(os.path.join(outputdir, f"{filename}.root")) as f:
         f["events"] = waveforms
@@ -115,7 +125,6 @@ def save_processed_waveforms(filename, outputdir, waveforms, metadata):
     meta_dict = {k: ak.to_list(metadata[k]) for k in metadata.fields}
     with open(os.path.join(outputdir, f"{filename}_metadata.json"), "w") as f:
         json.dump(meta_dict, f, indent=2)
-
 
     logger.info(f"Saved: {filename}.root")
     logger.info(f"  [events]   {len(waveforms)} entries | branches: {waveforms.fields}")
@@ -176,17 +185,16 @@ def correct_rawWf(dataset, datadir, filenumbers=[0]):
     return total_corrected_waveform, corrected_waveforms, baseline_PE, gain_file
 
 
-def process_rawWf(dataset, datadir, filenumbers = [0], outputdir = "", filenumber_in_filename = False):
+def process_rawWf(dataset, datadir, filenumbers = [0], outputdir = ""):
     """ 
      Process raw Waveforms and saves them to new root files. Add event ID and metadata.
-     Use the date and time as a file name.
+     Recreate the same directory structure and filenames. Processing of multiple filenumbers leads to merging of them.
 
      Args:
         data (str): Date of the input file
         datadir (str): Name of the directiory where the files are stored
         filenumbers (List(int)): Filenumbers to load
         outputdir (str): Where the root file should be saved
-        filenumber_in_filename (bool): Whether to put filenumber in filename, mainly used for background as large files
     """
      
     total_corrected_waveform, corrected_waveforms, baseline_PE, gain_file = correct_rawWf(dataset, datadir, filenumbers)
@@ -205,11 +213,7 @@ def process_rawWf(dataset, datadir, filenumbers = [0], outputdir = "", filenumbe
     waveforms = ak.Array(waveforms)
     metadata = ak.Array(metadata)
     
-    if filenumber_in_filename:
-        filename = dataset + f"_{filenumbers[:]}"
-    else:
-        filename = dataset
 
-    save_processed_waveforms(filename, outputdir, waveforms, metadata)
+    save_processed_waveforms(dataset, outputdir, filenumbers, waveforms, metadata)
 
     return

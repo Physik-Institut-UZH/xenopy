@@ -206,11 +206,9 @@ def process_pulses(dataset, datadir):
     Args:
         dataset [string]: name of the file
         datadir [string]: name of the folder
-        filelist [list]: List of file names
 
-    Output: awkward array of rawWFs and pulse shape variablels
+    Output: awkward array of pulse shape variables.
     """
-    merge = True
     
     logger.info(f"Loading waveforms from {dataset}")
     filename = os.path.join(datadir, dataset)
@@ -229,8 +227,12 @@ def process_pulses(dataset, datadir):
 
     logger.info("Calculating pulse shape variables")
     single_channels = ak.Array(single_channels)    
+    muon_channels = ak.Array(muon_channels)    
+
+
     pulses = []
-    
+    merge = True
+
     for n, rawWf in enumerate(summed_channels):
         starts, ends, peaks = DoGPulseFinder(rawWf)
         if merge:
@@ -380,7 +382,7 @@ def processEventsFromMultipleFiles(datasets, datadir):
     pulses = []
     for dataset in datasets:
         logger.info(f"Processing dataset {dataset}")
-        pulses_tmp = process_pulses(dataset, datadir)
+        pulses_tmp = process_pulses(dataset,  )
         pulses.append(pulses_tmp)
     
     pulses = ak.Array(pulses)
