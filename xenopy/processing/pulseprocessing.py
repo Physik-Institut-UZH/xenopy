@@ -9,44 +9,12 @@ import json
 import os
 import glob
 from datetime import datetime
+import uproot
+
+import logging
+logger = logging.getLogger(__name__)
 
 
-# ------------- Input Data Processing ------------- #
-
-###### Baselines ######
-
-def get_baseline_channel(wf):
-    """ average of first 50 samples, then median over all events in data_dict """
-
-    wf_initial = wf[:, 50:100] # get baseline from 50 samples (trigger at 200)
-    baselines = np.average(wf_initial, axis = 1) # changed this to average, and then take the median over events! ( basically super noise events ( events where something happens) will not determine the baseline!)
-    assert len(baselines) == wf_initial.shape[0]
-    std = np.std(wf_initial, axis = 1)
-    return baselines, std
-
-def get_avgbaseline_all_channels(wfs):
-    avg_baselines = {key: [] for key in wfs}
-    avg_stds = {key: [] for key in wfs}
-
-    for key in wfs.keys():
-        _baselines, _stds = get_baseline_channel(np.array(wfs[key]["waveforms"])) 
-        avg_baselines[key] = np.median(_baselines)
-        avg_stds[key] = np.std(_baselines)/len(_baselines)*1.253 # unsure how true this is...
-
-    return avg_baselines, avg_stds
-
-def baseline_correction(tiles):
-    """Apply to baseline correction to tiles array from loading function"""
-
-    gain = {key: 1 for key in tiles}
-
-    baseline, _ = get_avgbaseline_all_channels(tiles)
-
-    data_baselinecorrected = {
-        key: (baseline[key] - np.array(tiles[key]["waveforms"])[:, :])/gain[key]  
-        for key in tiles.keys()}
-
-    return data_baselinecorrected
 
 ###### Rebin ######
 
@@ -67,92 +35,7 @@ def bin_multiple_waveforms(arr, factor):
     return arr.reshape(n_rows, n_bins, factor).sum(axis=2)
 
 
-def load_gain(dataset):
-    """
-    Loads the gain file of the day / closest in date
-    Returns a dict with the gains and the path to the used gain file
-    """
-
-    gain = {}
-    tile_keys = ['tile_A', 'tile_B', 'tile_C', 'tile_D', 'tile_E', 'tile_F',
-                  'tile_G', 'tile_H', 'tile_J', 'tile_K', 'tile_L', 'tile_M']
-    
-    gain_directory = "/disk/gfs_atp/xlzd/xenoscope/proc_data/Run6/LED/gains/"
-    date_str = dataset.split("_")[0]
-    date_target = datetime.strptime(date_str, "%Y%m%d") 
-    
-    gain_files = glob.glob(os.path.join(gain_directory, "gain_*.json"))
-    if not gain_files:
-        raise FileNotFoundError(f"No gain files found in {gain_directory}")
-    
-    gain_file = min(gain_files,
-        key=lambda f: abs(datetime.strptime(os.path.basename(f), "gain_%Y%m%d.json") - date_target))
-
-    with open(gain_file, "r") as f:
-        gain_json = json.load(f)
-        print(gain_json)
-        for key in tile_keys:
-            gain[key] = gain_json[key]["SPE"] - gain_json[key]["Pedestal"]
-
-    return gain, gain_file
-
-###### Process Multiple Files ######
-
-def process_config(dataset, datadir, filenumbers=[0]):
-    """
-    Processes a single muon coincidence file by subtracting the baseline and summing all channels for each event.
-    Returns an array containing the summed signal per event.
-
-    Args:
-        data (str): Date of the input file
-        datadir (str): Name of the directiory where the files are stored
-        filenumbers (List(int)): Filenumbers to load
-    """
-    
-    
-    # Load waveforms
-    wfs, wfs_df, tiles = load_xenodaq_run(dataset, datadir, filenumbers)
-
-    tile_keys = ['tile_A', 'tile_B', 'tile_C', 'tile_D', 'tile_E', 'tile_F',
-                  'tile_G', 'tile_H', 'tile_J', 'tile_K', 'tile_L', 'tile_M']
-
-    ## Load gain file closest in time
-    gain, _ = load_gain(dataset)
-    
-    # Set muon panel scintillator triggers to gain 1
-    gain["muon1"] = 1
-    gain["muon2"] = 1
-    gain["muon3"] = 1
-
-    # gain = {key: 1 for key in tiles.keys()}
-
-    baseline, _ = get_avgbaseline_all_channels(tiles)
-
-    data_baselinecorrected = {
-        key: (baseline[key] - np.array(tiles[key]["waveforms"])[:, :])/gain[key]  
-        for key in tiles.keys()}
-    
-
-    ## sum only tiles and not muons!
-    summed_channels = np.sum(
-        np.stack([
-            data_baselinecorrected[key]
-            for key in tile_keys
-            ], axis=0),  # Stack along a new axis: [n_wf_total, n_events, waveform_len]
-        axis=0       # Sum over mod+wf → result shape: [n_events, waveform_len]
-    )
-    
-    # change baseline to PE for later processing of events
-    baseline_PE ={
-        key: baseline[key]/gain[key]
-        for key in baseline.keys()}
-
-
-    return summed_channels, data_baselinecorrected, baseline_PE
-
-
-
-# ------------- Raw Waveform Processing ------------- #
+# ------------- Pulse Processing ------------- #
 
 ## REMARK: Currently this is only plausible for muons as the pulse finder was tuned for muons!
 
@@ -257,6 +140,15 @@ def getAFT(rawWf, start, end, inital = 0.1, final = 0.9):
 
     return aft, left_index, right_index
 
+def getAFT50(rawWf, start, end):
+
+    totalArea = np.sum(rawWf[start:end])
+    area_ = np.cumsum(rawWf[start:end])
+
+    aft50 = np.where(area_ - totalArea*0.5 > 0)[0][0] + start
+
+    return aft50
+
 def getCoincidence(single_channels, start, end):
     nChannels = 0
     for key in single_channels.fields:
@@ -306,28 +198,38 @@ def getMaxChannel(single_channels, start, end):
     return maxChannel
     
 
-def processEvents(dataset, datadir, filenumbers):
+def process_pulses(dataset, datadir):
     """
-    Full processing of events with pusle finder tuned for muon events
+    Full processing of events with pusle finder tuned for muon events, 
+    takes the gain and baseline corrected waveforms as input.
 
     Args:
+        dataset [string]: name of the file
+        datadir [string]: name of the folder
         filelist [list]: List of file names
 
     Output: awkward array of rawWFs and pulse shape variablels
     """
     merge = True
     
-    summed_channels, single_channels, baseline = process_config(dataset, datadir, filenumbers)
+    logger.info(f"Loading waveforms from {dataset}")
+    filename = os.path.join(datadir, dataset)
 
-    print("Calculating pulse quantities")
+    waveforms = uproot.open(filename + ".root:events").arrays()
+    summed_channels = waveforms["summed_tiles"]
+    eventID = waveforms["eventID"]
+    single_channels = {key: waveforms[key] for key in waveforms.fields if "tile_" in key}
+    muon_channels = {key: waveforms[key] for key in waveforms.fields if "muon" in key}
+
+    with open(filename + "_metadata.json") as f:
+       metadata = json.load(f)
+    baseline = metadata["baseline"][0]
+    gain_file = metadata["gain_file"]
+
+
+    logger.info("Calculating pulse shape variables")
     single_channels = ak.Array(single_channels)    
     pulses = []
-    
-    # Pre-process single_channels to avoid repeated work inside the loop
-    single_channels_binned = {}
-    for field in single_channels.fields:
-        single_channels_binned[field] = bin_multiple_waveforms(np.array(single_channels[field]), 4)
-    single_channels_binned = ak.Array(single_channels_binned)
     
     for n, rawWf in enumerate(summed_channels):
         starts, ends, peaks = DoGPulseFinder(rawWf)
@@ -339,18 +241,32 @@ def processEvents(dataset, datadir, filenumbers):
 
         if len(starts) == 0:
             pulses.append({
-                "rawWf": rawWf,
-                "singleChannels": single_channels_binned[n],
-                "pulseStart": starts, "pulseEnd": ends, "peak": peaks,
-                "area": np.array([]), "width": np.array([]), "nPulses": 0,
+                # "rawWf": rawWf,
+                # "singleChannels": single_channels_binned[n],
+                "pulseStart": starts,
+                "pulseEnd": ends,
+                "peak": peaks,
+                "area": np.array([]),
+                "width": np.array([]),
+                "nPulses": 0,
                 "totalWfArea": np.sum(rawWf),
-                "fwhm": np.array([]), "aft": np.array([]), "fwhmLeft": np.array([]), "aftLeft": np.array([]),
-                "fwhm_us": np.array([]), "aft_us": np.array([]), "fwhmLeft_us": np.array([]), "aftLeft_us": np.array([]),
-                "pulseStart_us": np.array([]), "pulseEnd_us": np.array([]),
-                "maxima": np.array([]), "coincidence": np.array([]),
+                "fwhm": np.array([]),
+                "aft": np.array([]), 
+                "fwhmLeft": np.array([]), 
+                "aftLeft": np.array([]),
+                "fwhm_us": np.array([]), 
+                "aft_us": np.array([]), 
+                "fwhmLeft_us": np.array([]), 
+                "aftLeft_us": np.array([]),
+                "pulseStart_us": np.array([]), 
+                "pulseEnd_us": np.array([]),
+                "maxima": np.array([]), 
+                "coincidence": np.array([]),
                 "nSaturatedChannels": np.array([]),
                 "chSaturated": ak.Array({field: [False] for field in single_channels.fields}),
-                "maxima_over_fwhm": np.array([]), "peaktime_us": np.array([])
+                "maxima_over_fwhm": np.array([]), 
+                "peaktime_us": np.array([]), 
+                "aft50": np.array([]),
             })
             continue
 
@@ -360,18 +276,20 @@ def processEvents(dataset, datadir, filenumbers):
             areas = np.array([np.sum(rawWf[s:e]) for s, e in zip(starts, ends)])
             widths = ends - starts
 
-            fwhms, fwhms_left, fwhms_right = zip(*[getFWHM(rawWf, s, e, p) for s, e, p in zip(starts, ends, peaks)])
-            afts, afts_left, afts_right = zip(*[getAFT(rawWf, s, e) for s, e in zip(starts, ends)])
+            fwhms, fwhms_left, _ = zip(*[getFWHM(rawWf, s, e, p) for s, e, p in zip(starts, ends, peaks)])
+            afts, afts_left, _ = zip(*[getAFT(rawWf, s, e) for s, e in zip(starts, ends)])
+            aft50 = [getAFT50(rawWf, s, e) for s, e in zip(starts, ends)]
             
-            # R
             coincidence = [getCoincidence(single_channels[n], s, e) for s, e in zip(starts, ends)]
             nSaturatedChannels, chSaturated_list = zip(*[getSaturation(single_channels[n], baseline, s, e) for s, e in zip(starts, ends)])
             chSaturated = ak.concatenate(chSaturated_list)
 
+
         except Exception as e:
+        
             pulses.append({
-                "rawWf": rawWf,
-                "singleChannels": single_channels_binned[n],
+                # "rawWf": rawWf,
+                # "singleChannels": single_channels_binned[n],
                 "pulseStart": starts, "pulseEnd": ends, "peak": peaks,
                 "area": np.array([]), "width": np.array([]), "nPulses": 0,
                 "totalWfArea": np.sum(rawWf),
@@ -381,7 +299,8 @@ def processEvents(dataset, datadir, filenumbers):
                 "maxima": np.array([]), "coincidence": np.array([]),
                 "nSaturatedChannels": np.array([]),
                 "chSaturated": ak.Array({field: [False] for field in single_channels.fields}),
-                "maxima_over_fwhm": np.array([]), "peaktime_us": np.array([])
+                "maxima_over_fwhm": np.array([]), "peaktime_us": np.array([]),
+                "aft50": np.array([])
             })
             print(f"Empty event {n} because there are unresolved issues. Error: {e}")            
             continue
@@ -404,10 +323,13 @@ def processEvents(dataset, datadir, filenumbers):
         coincidence_sorted = np.array(coincidence)[sorted_indices]
         nSaturatedChannels_sorted = np.array(nSaturatedChannels)[sorted_indices]
         chSaturated_sorted = ak.Array({key: chSaturated[key][sorted_indices] for key in chSaturated.fields})
-        
+        aft50_sorted = np.array(aft50)[sorted_indices]
+
+        ## Check which cuts the event passes
+
         pulses.append({
-            "rawWf": rawWf,
-            "singleChannels": single_channels_binned[n],
+            # "rawWf": rawWf,
+            # "singleChannels": single_channels_binned[n],
             "pulseStart": starts_sorted,
             "pulseEnd": ends_sorted,
             "peak": peaks_sorted,
@@ -431,30 +353,41 @@ def processEvents(dataset, datadir, filenumbers):
             "chSaturated": chSaturated_sorted,
             "maxima_over_fwhm": maximas_sorted / fwhms_sorted,
             "peaktime_us": (starts_sorted - peaks_sorted) / 100,
+            "aft50": aft50_sorted,
+            "baseline": baseline,
+            "eventID": eventID
         })
-    
-    _, gain_file = load_gain(dataset)
+    #
+
+
     # Attach gain file as metadata on each event
     for pulse in pulses:
-        pulse["gainFile"] = gain_file
+        pulse["gain_file"] = gain_file
 
     pulses = ak.Array(pulses)
+
+    ## Add which cuts they pass!
+    cut_rqs(pulses)
+    pulses["cut_antiMuonVeto"] = anitMuonVeto(muon_channels)
+    pulses["cut_trigger"] = triggerSelection(muon_channels)
+
+
     return pulses
 
 
-def processEventsFromMultipleFiles(datasets, datadir, filenumbersLists):
+def processEventsFromMultipleFiles(datasets, datadir):
 
     pulses = []
-    for dataset, filenumbers in zip(datasets, filenumbersLists):
-        print(f"Processing dataset {dataset}")
-        pulses_tmp = processEvents(dataset, datadir, filenumbers)
+    for dataset in datasets:
+        logger.info(f"Processing dataset {dataset}")
+        pulses_tmp = process_pulses(dataset, datadir)
         pulses.append(pulses_tmp)
     
     pulses = ak.Array(pulses)
 
     pulses = ak.concatenate(pulses)
     
-    print("Processed all files.")
+    logger.info("Processed all files.")
 
     return pulses
 
@@ -487,18 +420,18 @@ def cut_rqs(pulses):
     return pulses
 
 
-def triggerSelection(data):
+def triggerSelection(muon_channels):
 
-    maskmuon1 = np.any(data["singleChannels"]["muon1"][:,200:300] > 100, axis = 1)
-    maskmuon2 = np.any(data["singleChannels"]["muon2"][:,200:300] > 100, axis = 1)
+    maskmuon1 = np.any(muon_channels["muon1"][:,200:300] > 500, axis = 1)
+    maskmuon2 = np.any(muon_channels["muon2"][:,200:300] > 500, axis = 1)
 
-    return data[(maskmuon1 & maskmuon2)]
+    return (maskmuon1 & maskmuon2)
 
-def anitMuonVeto(data):
+def anitMuonVeto(muon_channels):
 
-    maskmuon3 = np.any(data["singleChannels"]["muon3"] > 100, axis = 1)
+    maskmuon3 = np.any(muon_channels["muon3"] < 100, axis = 1)
 
-    return data[(not maskmuon3)]
+    return maskmuon3
 
 
 def data_selection(pulses):
