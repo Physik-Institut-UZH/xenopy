@@ -198,28 +198,32 @@ def getMaxChannel(single_channels, start, end):
     return maxChannel
     
 
-def process_pulses(dataset, datadir):
+def process_pulses(filename):
     """
     Full processing of events with pusle finder tuned for muon events, 
     takes the gain and baseline corrected waveforms as input.
 
     Args:
-        dataset [string]: name of the file
-        datadir [string]: name of the folder
+        filename [string]: name and path of the file
 
     Output: awkward array of pulse shape variables.
     """
     
-    logger.info(f"Loading waveforms from {dataset}")
-    filename = os.path.join(datadir, dataset)
+    logger.info(f"Loading waveforms from {filename}")
+    # filename = os.path.join(datadir, dataset)
 
-    waveforms = uproot.open(filename + ".root:events").arrays()
+    waveforms = uproot.open(filename + ":events").arrays()
     summed_channels = waveforms["summed_tiles"]
     eventID = waveforms["eventID"]
     single_channels = {key: waveforms[key] for key in waveforms.fields if "tile_" in key}
-    muon_channels = {key: waveforms[key] for key in waveforms.fields if "muon" in key}
+    try:
+        muon_channels = {key: waveforms[key] for key in waveforms.fields if "muon" in key}
+        muon_channels = ak.Array(muon_channels)    
 
-    with open(filename + "_metadata.json") as f:
+    except:
+        logger.info("No Muons in the file saved")
+
+    with open(filename[:-5] + "_metadata.json") as f:
        metadata = json.load(f)
     baseline = metadata["baseline"][0]
     gain_file = metadata["gain_file"]
@@ -227,7 +231,6 @@ def process_pulses(dataset, datadir):
 
     logger.info("Calculating pulse shape variables")
     single_channels = ak.Array(single_channels)    
-    muon_channels = ak.Array(muon_channels)    
 
 
     pulses = []
@@ -265,10 +268,12 @@ def process_pulses(dataset, datadir):
                 "maxima": np.array([]), 
                 "coincidence": np.array([]),
                 "nSaturatedChannels": np.array([]),
-                "chSaturated": ak.Array({field: [False] for field in single_channels.fields}),
+                "chSaturated": ak.Array({field: [] for field in single_channels.fields}),
                 "maxima_over_fwhm": np.array([]), 
                 "peaktime_us": np.array([]), 
                 "aft50": np.array([]),
+                "baseline": baseline,
+                "eventID": eventID[n]
             })
             continue
 
@@ -300,9 +305,11 @@ def process_pulses(dataset, datadir):
                 "pulseStart_us": np.array([]), "pulseEnd_us": np.array([]),
                 "maxima": np.array([]), "coincidence": np.array([]),
                 "nSaturatedChannels": np.array([]),
-                "chSaturated": ak.Array({field: [False] for field in single_channels.fields}),
+                "chSaturated": ak.Array({field: [] for field in single_channels.fields}),
                 "maxima_over_fwhm": np.array([]), "peaktime_us": np.array([]),
-                "aft50": np.array([])
+                "aft50": np.array([]),
+                "baseline": baseline,
+                "eventID": eventID[n]
             })
             print(f"Empty event {n} because there are unresolved issues. Error: {e}")            
             continue
@@ -357,7 +364,7 @@ def process_pulses(dataset, datadir):
             "peaktime_us": (starts_sorted - peaks_sorted) / 100,
             "aft50": aft50_sorted,
             "baseline": baseline,
-            "eventID": eventID
+            "eventID": eventID[n]
         })
     #
 
@@ -370,11 +377,27 @@ def process_pulses(dataset, datadir):
 
     ## Add which cuts they pass!
     cut_rqs(pulses)
-    pulses["cut_antiMuonVeto"] = anitMuonVeto(muon_channels)
-    pulses["cut_trigger"] = triggerSelection(muon_channels)
+    try:
+        pulses["cut_trigger"] = triggerSelection(muon_channels)
+    except:
+        logger.info("No muons available")
+    try:
+        pulses["cut_antiMuonVeto"] = anitMuonVeto(muon_channels)
+    except:
+        logger.info("No muon3 available")
+
 
 
     return pulses
+
+def find_root_files(dataset_folder, datadir):
+    """Find all .root files in a dataset folder."""
+
+    pattern = "*.root"
+    filepath = os.path.join(datadir, dataset_folder, pattern)
+    print(filepath)
+    print(sorted(glob.glob(filepath)))
+    return sorted(glob.glob(filepath))
 
 
 def processEventsFromMultipleFiles(datasets, datadir):
@@ -382,8 +405,16 @@ def processEventsFromMultipleFiles(datasets, datadir):
     pulses = []
     for dataset in datasets:
         logger.info(f"Processing dataset {dataset}")
-        pulses_tmp = process_pulses(dataset,  )
-        pulses.append(pulses_tmp)
+        root_files = find_root_files(dataset, datadir)
+        if not root_files:
+            logger.warning(f"No ROOT files found in {dataset}")
+            continue
+
+        for root_file in root_files:
+            logger.info(f"Processing file {root_file}")
+            pulses_tmp = process_pulses(root_file)
+            pulses.append(pulses_tmp)
+            
     
     pulses = ak.Array(pulses)
 
@@ -424,8 +455,8 @@ def cut_rqs(pulses):
 
 def triggerSelection(muon_channels):
 
-    maskmuon1 = np.any(muon_channels["muon1"][:,200:300] > 500, axis = 1)
-    maskmuon2 = np.any(muon_channels["muon2"][:,200:300] > 500, axis = 1)
+    maskmuon1 = np.any(muon_channels["muon1"][:,200:300] > 100, axis = 1)
+    maskmuon2 = np.any(muon_channels["muon2"][:,200:300] > 100, axis = 1)
 
     return (maskmuon1 & maskmuon2)
 

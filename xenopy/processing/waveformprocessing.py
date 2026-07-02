@@ -100,16 +100,8 @@ def load_gain(dataset):
     return gain, gain_file
 
 
-def save_processed_waveforms(dataset, outputdir, filenumbers, waveforms, metadata):
-
-    """ Save the processed waveforms stored in an awkward array in a new root file
-    Args:
-        filename [string]: name of the outputfile
-        outputdir [string]: name of the output directory
-        filenumbers [List]: list of processed filenumebrs
-        waveforms [ak.Array]: array with the single waveforms, summed waveform and event id
-        metadata [ak.Array]: array with the metadata to be saved
-    """
+def save_processed_waveforms(dataset, outputdir, filenumbers, waveforms, metadata,
+                              target_basket_bytes=500_000_000):  # save in small chunks!
 
     outputdir = os.path.join(outputdir, dataset)
     os.makedirs(outputdir, exist_ok=True)
@@ -119,15 +111,28 @@ def save_processed_waveforms(dataset, outputdir, filenumbers, waveforms, metadat
     else:
         filename = dataset + f"_{int(filenumbers[0]):04d}"
 
+    n_events = len(waveforms)
+    bytes_per_event = waveforms.nbytes / n_events
+    chunk_size = max(1, int(target_basket_bytes / bytes_per_event))
+
+    logger.info(f"  ~{bytes_per_event/1e6:.2f} MB/event -> chunk_size={chunk_size}")
+
     with uproot.recreate(os.path.join(outputdir, f"{filename}.root")) as f:
-        f["events"] = waveforms
+        for start in range(0, n_events, chunk_size):
+            stop = min(start + chunk_size, n_events)
+            chunk = waveforms[start:stop]
+
+            if "events" not in f:
+                f["events"] = chunk
+            else:
+                f["events"].extend(chunk)
 
     meta_dict = {k: ak.to_list(metadata[k]) for k in metadata.fields}
     with open(os.path.join(outputdir, f"{filename}_metadata.json"), "w") as f:
         json.dump(meta_dict, f, indent=2)
 
     logger.info(f"Saved: {filename}.root")
-    logger.info(f"  [events]   {len(waveforms)} entries | branches: {waveforms.fields}")
+    logger.info(f"  [events]   {n_events} entries | branches: {waveforms.fields}")
 
     return
 
