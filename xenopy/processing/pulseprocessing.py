@@ -11,6 +11,8 @@ import glob
 from datetime import datetime
 import uproot
 
+from tqdm import tqdm
+
 import logging
 logger = logging.getLogger(__name__)
 
@@ -198,24 +200,32 @@ def getMaxChannel(single_channels, start, end):
     return maxChannel
     
 
-def process_pulses(filename):
+def process_pulses(filename, entry_start = None, entry_stop = None):
     """
     Full processing of events with pusle finder tuned for muon events, 
     takes the gain and baseline corrected waveforms as input.
 
     Args:
         filename [string]: name and path of the file
+        entry_start [int]: event where to start processing
+        entry_stop [int]: event where to end processing
 
     Output: awkward array of pulse shape variables.
     """
     
-    logger.info(f"Loading waveforms from {filename}")
-    # filename = os.path.join(datadir, dataset)
+    if entry_start is None:
+        waveforms = uproot.open(filename + ":events").arrays(filter_name=["summed_tiles", "eventID", "muon1", "muon2", "muon3"])
+        logger.info(f"Loading all waveforms from {filename}")
 
-    waveforms = uproot.open(filename + ":events").arrays()
+    else:
+        with uproot.open(filename) as f:
+            tree = f["events"]
+            waveforms = tree.arrays(filter_name=["summed_tiles", "eventID", "muon1", "muon2", "muon3"], entry_start= entry_start, entry_stop=entry_stop)
+        logger.info(f"Loading waveforms from {filename}, from event {entry_start} to event {entry_stop}")
+
     summed_channels = waveforms["summed_tiles"]
     eventID = waveforms["eventID"]
-    single_channels = {key: waveforms[key] for key in waveforms.fields if "tile_" in key}
+    # single_channels = {key: waveforms[key] for key in waveforms.fields if "tile_" in key}
     try:
         muon_channels = {key: waveforms[key] for key in waveforms.fields if "muon" in key}
         muon_channels = ak.Array(muon_channels)    
@@ -230,13 +240,13 @@ def process_pulses(filename):
 
 
     logger.info("Calculating pulse shape variables")
-    single_channels = ak.Array(single_channels)    
+    # single_channels = ak.Array(single_channels)    
 
 
     pulses = []
     merge = True
 
-    for n, rawWf in enumerate(summed_channels):
+    for n, rawWf in enumerate(tqdm(summed_channels)):
         starts, ends, peaks = DoGPulseFinder(rawWf)
         if merge:
             starts, ends, peaks = mergePulses(rawWf, starts, ends, peaks)
@@ -266,9 +276,9 @@ def process_pulses(filename):
                 "pulseStart_us": np.array([]), 
                 "pulseEnd_us": np.array([]),
                 "maxima": np.array([]), 
-                "coincidence": np.array([]),
-                "nSaturatedChannels": np.array([]),
-                "chSaturated": ak.Array({field: [] for field in single_channels.fields}),
+                # "coincidence": np.array([]),
+                # "nSaturatedChannels": np.array([]),
+                # "chSaturated": ak.Array({field: [] for field in single_channels.fields}),
                 "maxima_over_fwhm": np.array([]), 
                 "peaktime_us": np.array([]), 
                 "aft50": np.array([]),
@@ -287,9 +297,9 @@ def process_pulses(filename):
             afts, afts_left, _ = zip(*[getAFT(rawWf, s, e) for s, e in zip(starts, ends)])
             aft50 = [getAFT50(rawWf, s, e) for s, e in zip(starts, ends)]
             
-            coincidence = [getCoincidence(single_channels[n], s, e) for s, e in zip(starts, ends)]
-            nSaturatedChannels, chSaturated_list = zip(*[getSaturation(single_channels[n], baseline, s, e) for s, e in zip(starts, ends)])
-            chSaturated = ak.concatenate(chSaturated_list)
+            # coincidence = [getCoincidence(single_channels[n], s, e) for s, e in zip(starts, ends)]
+            # nSaturatedChannels, chSaturated_list = zip(*[getSaturation(single_channels[n], baseline, s, e) for s, e in zip(starts, ends)])
+            # chSaturated = ak.concatenate(chSaturated_list)
 
 
         except Exception as e:
@@ -303,9 +313,10 @@ def process_pulses(filename):
                 "fwhm": np.array([]), "aft": np.array([]), "fwhmLeft": np.array([]), "aftLeft": np.array([]),
                 "fwhm_us": np.array([]), "aft_us": np.array([]), "fwhmLeft_us": np.array([]), "aftLeft_us": np.array([]),
                 "pulseStart_us": np.array([]), "pulseEnd_us": np.array([]),
-                "maxima": np.array([]), "coincidence": np.array([]),
-                "nSaturatedChannels": np.array([]),
-                "chSaturated": ak.Array({field: [] for field in single_channels.fields}),
+                "maxima": np.array([]), 
+                # "coincidence": np.array([]),
+                # "nSaturatedChannels": np.array([]),
+                # "chSaturated": ak.Array({field: [] for field in single_channels.fields}),
                 "maxima_over_fwhm": np.array([]), "peaktime_us": np.array([]),
                 "aft50": np.array([]),
                 "baseline": baseline,
@@ -329,9 +340,9 @@ def process_pulses(filename):
         fwhms_left_sorted = np.array(fwhms_left)[sorted_indices]
         afts_sorted = np.array(afts)[sorted_indices]
         afts_left_sorted = np.array(afts_left)[sorted_indices]
-        coincidence_sorted = np.array(coincidence)[sorted_indices]
-        nSaturatedChannels_sorted = np.array(nSaturatedChannels)[sorted_indices]
-        chSaturated_sorted = ak.Array({key: chSaturated[key][sorted_indices] for key in chSaturated.fields})
+        # coincidence_sorted = np.array(coincidence)[sorted_indices]
+        # nSaturatedChannels_sorted = np.array(nSaturatedChannels)[sorted_indices]
+        # chSaturated_sorted = ak.Array({key: chSaturated[key][sorted_indices] for key in chSaturated.fields})
         aft50_sorted = np.array(aft50)[sorted_indices]
 
         ## Check which cuts the event passes
@@ -357,16 +368,15 @@ def process_pulses(filename):
             "pulseStart_us": starts_sorted / 100,
             "pulseEnd_us": ends_sorted / 100,
             "maxima": maximas_sorted,
-            "coincidence": coincidence_sorted,
-            "nSaturatedChannels": nSaturatedChannels_sorted,
-            "chSaturated": chSaturated_sorted,
+            # "coincidence": coincidence_sorted,
+            # "nSaturatedChannels": nSaturatedChannels_sorted,
+            # "chSaturated": chSaturated_sorted,
             "maxima_over_fwhm": maximas_sorted / fwhms_sorted,
             "peaktime_us": (starts_sorted - peaks_sorted) / 100,
             "aft50": aft50_sorted,
             "baseline": baseline,
             "eventID": eventID[n]
         })
-    #
 
 
     # Attach gain file as metadata on each event
@@ -386,21 +396,22 @@ def process_pulses(filename):
     except:
         logger.info("No muon3 available")
 
-
-
     return pulses
+
 
 def find_root_files(dataset_folder, datadir):
     """Find all .root files in a dataset folder."""
 
     pattern = "*.root"
     filepath = os.path.join(datadir, dataset_folder, pattern)
-    print(filepath)
-    print(sorted(glob.glob(filepath)))
+
     return sorted(glob.glob(filepath))
 
 
 def processEventsFromMultipleFiles(datasets, datadir):
+    """
+    Function to process multiple files at once (use this function if the files are small!)
+    """
 
     pulses = []
     for dataset in datasets:
@@ -417,7 +428,6 @@ def processEventsFromMultipleFiles(datasets, datadir):
             
     
     pulses = ak.Array(pulses)
-
     pulses = ak.concatenate(pulses)
     
     logger.info("Processed all files.")
