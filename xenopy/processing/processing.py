@@ -6,6 +6,10 @@ from scipy.ndimage import gaussian_filter1d
 import csv
 from xenopy.io import load_xenodaq_run, print_file_structure
 from matplotlib.gridspec import GridSpec
+import json
+import os
+import glob
+from datetime import datetime
 
 
 # ------------- Input Data Processing ------------- #
@@ -34,6 +38,18 @@ def get_avgbaseline_all_channels(wfs):
 
     return avg_baselines, avg_stds
 
+def baseline_correction(tiles):
+    """Apply to baseline correction to tiles array from loading function"""
+
+    gain = {key: 1 for key in tiles}
+
+    baseline, _ = get_avgbaseline_all_channels(tiles)
+
+    data_baselinecorrected = {
+        key: (baseline[key] - np.array(tiles[key]["waveforms"])[:, :])/gain[key]  
+        for key in tiles.keys()}
+
+    return data_baselinecorrected
 
 ###### PE Conversion ######
 
@@ -78,6 +94,35 @@ def bin_multiple_waveforms(arr, factor):
     return arr.reshape(n_rows, n_bins, factor).sum(axis=2)
 
 
+def load_gain(dataset):
+    """
+    Loads the gain file of the day / closest in date
+    Returns a dict with the gains and the path to the used gain file
+    """
+
+    gain = {}
+    tile_keys = ['tile_A', 'tile_B', 'tile_C', 'tile_D', 'tile_E', 'tile_F',
+                  'tile_G', 'tile_H', 'tile_J', 'tile_K', 'tile_L', 'tile_M']
+    
+    gain_directory = "/disk/gfs_atp/xlzd/xenoscope/proc_data/Run6/LED/gains/"
+    date_str = dataset.split("_")[0]
+    date_target = datetime.strptime(date_str, "%Y%m%d") 
+    
+    gain_files = glob.glob(os.path.join(gain_directory, "gain_*.json"))
+    if not gain_files:
+        raise FileNotFoundError(f"No gain files found in {gain_directory}")
+    
+    gain_file = min(gain_files,
+        key=lambda f: abs(datetime.strptime(os.path.basename(f), "gain_%Y%m%d.json") - date_target))
+
+    with open(gain_file, "r") as f:
+        gain_json = json.load(f)
+        print(gain_json)
+        for key in tile_keys:
+            gain[key] = gain_json[key]["SPE"] - gain_json[key]["Pedestal"]
+
+    return gain, gain_file
+
 ###### Process Multiple Files ######
 
 def process_config(dataset, datadir, filenumbers=[0]):
@@ -95,30 +140,18 @@ def process_config(dataset, datadir, filenumbers=[0]):
     # Load waveforms
     wfs, wfs_df, tiles = load_xenodaq_run(dataset, datadir, filenumbers)
 
-    tile_keys = ['tile_A', 'tile_B', 'tile_C', 'tile_D', 'tile_E', 'tile_F', 'tile_G', 'tile_H', 'tile_J', 'tile_K', 'tile_L', 'tile_M']
-    {k: v for k, v in wfs.items() if k not in tile_keys or k in wfs}
+    tile_keys = ['tile_A', 'tile_B', 'tile_C', 'tile_D', 'tile_E', 'tile_F',
+                  'tile_G', 'tile_H', 'tile_J', 'tile_K', 'tile_L', 'tile_M']
 
-    gain = {key for key in tiles.keys()}
+    ## Load gain file closest in time
+    gain, _ = load_gain(dataset)
+    
+    # Set muon panel scintillator triggers to gain 1
+    gain["muon1"] = 1
+    gain["muon2"] = 1
+    gain["muon3"] = 1
 
-    ## Apply gain! -> skip this during shifter checks, just set all to 1
-    ## needs reimplementing for new daq
-    # gain = {"mod0":{}, "mod1":{}}
-    # with open("/home/lze/rhampp/XenoscopeAnalysis/LED/gains.txt", "r") as f:
-    #     reader = csv.DictReader(f)
-    #     for row in reader:
-    #         group = row['group']
-    #         wf = row['wf']
-    #         gain_ = float(row['gain'])
-
-    #         if group not in gain:
-    #             gain[group] = {}
-    #         gain[group][wf] = gain_ 
-
-    # # Set muon panel scintillator triggers to 1
-    # gain["mod0"]["wf6"] = 1
-    # gain["mod0"]["wf7"] = 1
-
-    gain = {key: 1 for key in tiles.keys()}
+    # gain = {key: 1 for key in tiles.keys()}
 
     baseline, _ = get_avgbaseline_all_channels(tiles)
 
@@ -167,8 +200,8 @@ def DoGPulseFinder(rawWf):
     # potnteial Peaks: first derivative around 0 and second < zero
     # Why not exactly zero? won't have the value == 0 in the array but close to zero!
     # filteredWf has to be lower then -25 to reduce noise!
-    scaling = 1000 # since the waveforms are not gain corrected anymore rescale the factors (gain ~O(1000))
-    potentialBoundaries = np.where((np.abs(derivative1) < 0.0001*scaling) & (derivative2 > 0) & (filteredWf < -0.5*scaling))[0]
+    scaling = 1 # since the waveforms are not gain corrected anymore rescale the factors (gain ~O(1000))
+    potentialBoundaries = np.where((np.abs(derivative1) < 0.001*scaling) & (derivative2 > 0) & (filteredWf < -0.5*scaling))[0]
     potentialPeaks = np.where((np.abs(derivative1) < 0.001*scaling) & (derivative2 < 0) & (rawWf > 5*scaling))[0]
 
     if len(potentialBoundaries) == 0:
@@ -208,11 +241,11 @@ def mergePulses(rawWf, starts, ends, peaks):
     current_peak = peaks[0]
     for i in range(0,len(starts)-1):
         next_peak = peaks[i+1]
-        scaling = 1000 # also add scaling here because no gain used
+        scaling = 1 # remove scaling as gains are applied
         if ak.any(rawWf[current_peak:next_peak] < (max([rawWf[current_peak],rawWf[next_peak]])/10/scaling)):# or ((next_peak- current_start) > 10000): # maybe make this better?
             final_starts.append(current_start)
             final_ends.append(ends[i])
-            final_peaks.append(current_peak)
+            final_peaks.append(np.argmax(rawWf[current_start:ends[i]]) + current_start )
             current_start = starts[i+1]
             current_peak = peaks[i+1]
         else:
@@ -427,6 +460,11 @@ def processEvents(dataset, datadir, filenumbers):
             "peaktime_us": (starts_sorted - peaks_sorted) / 100,
         })
     
+    _, gain_file = load_gain(dataset)
+    # Attach gain file as metadata on each event
+    for pulse in pulses:
+        pulse["gainFile"] = gain_file
+
     pulses = ak.Array(pulses)
     return pulses
 
@@ -434,7 +472,6 @@ def processEvents(dataset, datadir, filenumbers):
 def processEventsFromMultipleFiles(datasets, datadir, filenumbersLists):
 
     pulses = []
-    start = 0
     for dataset, filenumbers in zip(datasets, filenumbersLists):
         print(f"Processing dataset {dataset}")
         pulses_tmp = processEvents(dataset, datadir, filenumbers)
@@ -478,10 +515,17 @@ def cut_rqs(pulses):
 
 
 def triggerSelection(data):
+
     maskmuon1 = np.any(data["singleChannels"]["muon1"][:,200:300] > 100, axis = 1)
-    maskmuon2 = np.any(data["singleChannels"]["muon2"][:,200:300]  > 100, axis = 1)
+    maskmuon2 = np.any(data["singleChannels"]["muon2"][:,200:300] > 100, axis = 1)
 
     return data[(maskmuon1 & maskmuon2)]
+
+def anitMuonVeto(data):
+
+    maskmuon3 = np.any(data["singleChannels"]["muon3"] > 100, axis = 1)
+
+    return data[(not maskmuon3)]
 
 
 def data_selection(pulses):

@@ -1,121 +1,195 @@
-import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.gridspec import GridSpec
+from typing import List
 from typing import Optional
+
+import matplotlib
+import matplotlib.cm as cm
+import matplotlib.pyplot as plt
+from matplotlib.gridspec import GridSpec
+from matplotlib.patches import Rectangle, Circle
+
 
 def load_layout():
     array_layout = np.loadtxt('/disk/gfs_atp/xenoscope/tpc/tiles_layout.txt')
     array_labels = ['A', 'B', 'C', 'D', 'E', 'F',
                     'G', 'H', 'J', 'K', 'L', 'M']
+        
     return array_layout, array_labels
 
+def plot_hitpattern(hitpattern: [np.ndarray, List[float]],
+                    layout: np.ndarray,
+                    labels: List[str] = None,
+                    r_tpc: float = None,
+                    cmap: str = 'gnuplot',
+                    log: bool = False,
+                    ax=None):
+    """Plot a beautiful hitpattern.
 
-def plot_waveform_withpattern(plottitle, single_channels, data, n_wf):
-    ## Adjust this!!
-    labels = {'mod0' : {'wf1': 'wf1 | Tile H', 'wf2': 'wf2 | Tile J', 
-                        'wf3': 'wf3 | Tile K', 'wf4': 'wf4 | Tile L',
-                        'wf5': 'wf5 | Tile M'},
-              'mod1' : {'wf1': 'wf1 | Tile A', 'wf2': 'wf2 | Tile B', 
-                        'wf3': 'wf3 | Tile C', 'wf4': 'wf4 | Tile D',
-                        'wf5': 'wf5 | Tile E', 'wf6': 'wf6 | Tile F', 
-                        'wf7': 'wf7 | Tile G' }
-             }
-    
-    labels = {{'wf1': 'wf1 | Tile H', 'wf2': 'wf2 | Tile J', 
-                        'wf3': 'wf3 | Tile K', 'wf4': 'wf4 | Tile L',
-                        'wf5': 'wf5 | Tile M', 'wf6': 'wf6 | Tile A', 'wf7': 'wf7 | Tile B', 
-                        'wf8': 'wf8 | Tile C', 'wf9': 'wf9 | Tile D',
-                        'wf10': 'wf10 | Tile E', 'wf11': 'wf11 | Tile F', 
-                        'wf12': 'wf12 | Tile G' }
-                        }
+    Args:
+        hitpattern (Union[np.ndarray, List[float]]): array with the area per sensor.
+        layout (np.ndarray): layout of the sensor array (x1,x2,y1,y2) corners.
+        labels (Optional[List[str]], optional): ordered labels to put in the
+            center of each sensor. Defaults to None.
+        r_tpc (Optional[float], optional): plot a line at the tpc edge.
+            Defaults to None.
+        cmap (str, optional): name of colormap to use. Defaults to 'gnuplot'.
+        log (bool, optional): plot the log10 of pe instead of pe. Defaults to False.
+        ax (_type_, optional): axis where to draw the hitpattern. Defaults to None.
+
+    Returns:
+        (fig, axis, mappable): figure (or None if ax was provided), axis with
+            the hitpattern drawn, and the mappable for a colorbar.
+    """
+    fig = None
+    if ax is None:
+        fig, ax = plt.subplots(1, 1)
+
+    cm = plt.get_cmap(cmap)
+
+    hitpattern = np.array(hitpattern, dtype=float)
+    if log:
+        hitpattern = np.log10(np.clip(hitpattern, a_min=1e-10, a_max=None))
+
+    color_max = np.max(hitpattern)
+    color_min = np.min(hitpattern)
+
+    color_range = color_max - color_min
+    if color_range == 0:
+        color_range = 1.0  # all patches will map to the midpoint colour
+
+    for i, _sensor in enumerate(layout):
+        pe = hitpattern[i]
+
+        xy = (_sensor[0], _sensor[2])
+        width = _sensor[1] - _sensor[0]
+        height = _sensor[3] - _sensor[2]
+        ax.add_patch(Rectangle(xy, width, height, fill=True,
+                               edgecolor='k',
+                               facecolor=cm((pe - color_min) / color_range)))
+        if labels is not None:
+            ax.text(xy[0] + width / 2, xy[1] + height / 2, labels[i],
+                    ha='center', va='center', zorder=10)
+
+    if r_tpc is not None:
+        ax.add_patch(Circle((0, 0), r_tpc, color='r', fill=False,
+                            label='TPC edge'))
+
+    norm = matplotlib.colors.Normalize(vmin=color_min, vmax=color_max)
+    mappable = matplotlib.cm.ScalarMappable(norm=norm, cmap=cmap)
+
+    return (fig, ax, mappable)
+
+
+def plot_waveform_withpattern(plottitle, data, n_wf):
+    labels = {
+        'tile_H': 'Tile H', 'tile_J': 'Tile J',
+        'tile_K': 'Tile K', 'tile_L': 'Tile L',
+        'tile_M': 'Tile M',
+        'tile_A': 'Tile A', 'tile_B': 'Tile B',
+        'tile_C': 'Tile C', 'tile_D': 'Tile D',
+        'tile_E': 'Tile E', 'tile_F': 'Tile F',
+        'tile_G': 'Tile G'
+    }
 
     array_layout, array_labels = load_layout()
-    fig = plt.figure(figsize = (14,7), dpi = 200)
-    gs = GridSpec(3, 2, width_ratios=[1, 0.8], height_ratios=[1,1, 1])
+    fig = plt.figure(figsize=(14, 7), dpi=200)
+    gs = GridSpec(3, 2, width_ratios=[1, 0.8], height_ratios=[1, 1, 1])
 
-    ax_trigger = fig.add_subplot(gs[0,1])
-    ax_wf = fig.add_subplot(gs[0,0])
-    ax_mod1 = fig.add_subplot(gs[1,0], sharex = ax_wf)
-    ax_mod0 = fig.add_subplot(gs[2,0], sharex = ax_wf)
-    ax_hitp = fig.add_subplot(gs[1:3,1])
-    
-    n_samples = len(single_channels["wf1"][0])
-    _x = np.arange(0, n_samples/100, 0.01)
+    ax_trigger = fig.add_subplot(gs[0, 1])
+    ax_wf = fig.add_subplot(gs[0, 0])
+    ax_mod1 = fig.add_subplot(gs[1, 0], sharex=ax_wf)
+    ax_mod0 = fig.add_subplot(gs[2, 0], sharex=ax_wf)
+    ax_hitp = fig.add_subplot(gs[1:3, 1])
+
+    n_samples = len(data["singleChannels"]["tile_A"][n_wf])
+    _x = np.linspace(0, 2500, n_samples)
 
 
     plt.subplots_adjust(hspace=0.2)
     trigger_label = ["Trigger 1", "Trigger 2"]
     linewidth = 1
-    for i,_ch in enumerate(['wf6', 'wf7']):
-        ax_trigger.plot(_x, single_channels[_ch][n_wf], 
-                    label = trigger_label[i], linewidth = linewidth)
-    
-    for _ch in ['wf1','wf2','wf3', 'wf4', 'wf5',]:
-        ax_mod0.plot(_x, single_channels[_ch][n_wf], 
-                    label = labels[_ch], linewidth = linewidth)
 
-    for _ch in ['wf1','wf2','wf3', 'wf4', 'wf5', 'wf7']:
-        ax_mod1.plot(_x, single_channels[_ch][n_wf], 
-                    label = labels[_ch], linewidth = linewidth)
+    for i, tile in enumerate(['muon1', 'muon2']):
+        ax_trigger.plot(_x, data["singleChannels"][tile][n_wf],
+                        label=trigger_label[i], linewidth=linewidth)
+
+    for tile in ['tile_A', 'tile_B', 'tile_C', 'tile_D', 'tile_E', 'tile_F']:
+        ax_mod0.plot(_x, data["singleChannels"][tile][n_wf],
+                     label=labels[tile], linewidth=linewidth)
+    
+    for tile in ['tile_G','tile_H', 'tile_J', 'tile_K', 'tile_L', 'tile_M']:
+        ax_mod1.plot(_x, data["singleChannels"][tile][n_wf],
+                     label=labels[tile], linewidth=linewidth)
         
-    ax_wf.plot(_x, data["rawWf"][n_wf], label = "Total Waveform", linewidth = linewidth)
+    n_samples = len(data["rawWf"][n_wf])
+    x_large = np.arange(0, n_samples / 100, 0.01)
+    ax_wf.plot(x_large, data["rawWf"][n_wf], label="Total Waveform", linewidth=linewidth)
 
     if data["nPulses"][n_wf] > 0:
+        cmap_binary = plt.get_cmap('binary_r')
+        n_colors = data["nPulses"][n_wf] - 1
 
-        cmap = plt.get_cmap('binary_r')
-        n_colors = data["nPulses"][n_wf] -1
-        colors = [cmap(i) for i in np.linspace(0.3,0.7,n_colors)]
-        ax_wf.axvspan(data[n_wf]["pulseStart_us"][0], data[n_wf]["pulseEnd_us"][0],alpha = 0.3, color = "Red", label= f"Prominent Pulse")
+        # FIX 4: data[n_wf]["pulseStart_us"] → data["pulseStart_us"][n_wf]
+        ax_wf.axvspan(data["pulseStart_us"][n_wf][0], data["pulseEnd_us"][n_wf][0],
+                      alpha=0.3, color="Red", label="Prominent Pulse")
+
         if data["nPulses"][n_wf] > 1:
-            for pulseStart, pulseEnd,  color in zip(data[n_wf]["pulseStart_us"][1:],data[n_wf]["pulseEnd_us"][1:], colors) :
-                ax_wf.axvspan(pulseStart, pulseEnd,alpha = 0.3, color = color)
-        width = data[n_wf]["fwhm_us"][0]
-        area = data[n_wf]["area"][0]
-        ax_wf.plot(0, 0, ",", color = "white", label = f"FWHM = {width:.0f} us")
-        ax_wf.plot(0, 0, ",", color = "white", label = f"Area = {area:.2e} PE")
+            colors = [cmap_binary(i) for i in np.linspace(0.3, 0.7, n_colors)]
+            for pulseStart, pulseEnd, color in zip(
+                data["pulseStart_us"][n_wf][1:],
+                data["pulseEnd_us"][n_wf][1:],
+                colors
+            ):
+                ax_wf.axvspan(pulseStart, pulseEnd, alpha=0.3, color=color)
+
+        width = data["fwhm_us"][n_wf][0]   # FIX 4 (same): corrected indexing
+        area = data["area"][n_wf][0]
+        ax_wf.plot(0, 0, ",", color="white", label=f"FWHM = {width:.0f} us")
+        ax_wf.plot(0, 0, ",", color="white", label=f"Area = {area:.2e} PE")
 
     ax_wf.legend()
-
     ax_mod0.set_xlabel('Time [us]')
-    ax_mod1.set_ylabel('Amplitude [PE/20ns]')
+    ax_mod0.set_ylabel('Amplitude [PE/40ns]')
+    ax_mod1.set_ylabel('Amplitude [PE/40ns]')
+    ax_wf.set_ylabel('Amplitude [PE/10ns]')
+
     ax_mod0.legend()
     ax_mod1.legend()
     ax_trigger.legend()
     ax_trigger.set_ylabel('Amplitude [ADC value]')
 
-    
-    #Make hitpattern
+    # Build hitpattern 
     hitpattern_area = []
-    for key in single_channels.keys():
-        _wf = single_channels[key][n_wf]
-        _area = np.sum(_wf)
-        hitpattern_area.append(_area)
 
+    for tile in ['tile_A', 'tile_B', 'tile_C', 'tile_D', 'tile_E', 'tile_F']:
+        _wf = data["singleChannels"][tile][n_wf]
+        hitpattern_area.append(np.sum(_wf))
 
-    ax, _map = pylars.plotting.plot_hitpattern(
-        hitpattern = hitpattern_area,
-        layout = array_layout,
-        labels = array_labels,
-        r_tpc = 160/2,
-        cmap = 'cividis',
-        log = False,
-        ax = ax_hitp)
-    
-    ax.set_xlim(-100,100)
-    ax.set_ylim(-100,100)
+    for tile in ['tile_G','tile_H', 'tile_J', 'tile_K', 'tile_L', 'tile_M']:
+        _wf = data["singleChannels"][tile][n_wf]
+        hitpattern_area.append(np.sum(_wf))
+
+    _, ax, mappable = plot_hitpattern(
+        hitpattern=hitpattern_area,
+        layout=array_layout,
+        labels=array_labels,
+        r_tpc=160 / 2,
+        cmap='cividis',
+        log=False,
+        ax=ax_hitp)
+
+    ax.set_xlim(-100, 100)
+    ax.set_ylim(-100, 100)
     ax.set_aspect('equal')
-    fig.colorbar(_map, label = 'Total waveform area [PE]')
-    
+    fig.colorbar(mappable, label='Total waveform area [PE]')
+
     ax_hitp.set_xlabel('x [mm]')
     ax_hitp.set_ylabel('y [mm]')
-    
-    # fig.legend(ncol = 5, loc = 'lower center', 
-    #            bbox_to_anchor  = (0,0.9,1,0))
-    fig.suptitle(f'{plottitle}, Event {n_wf}', y = 0.92, x = 0.5, horizontalalignment='center',
-                 verticalalignment='center', transform=fig.transFigure)
-    fig.show()
 
-    return
+    fig.suptitle(f'{plottitle}, Event {n_wf}', y=0.92, x=0.5,
+                 horizontalalignment='center', verticalalignment='center',
+                 transform=fig.transFigure)
+    fig.show()
 
 
 
@@ -217,7 +291,7 @@ def plot_all_tiles_average(avg_waveforms: dict, title: str = '') -> plt.Figure:
 
     ax.set_xlabel(r'$\mathrm{Sample~number}$')
     ax.set_ylabel(r'$\mathrm{ADC~counts}$')
-    ax.legend(loc='best', ncol=3, frameon=True)
+    ax.legend(loc = "best", ncol=2, frameon=True)
 
     if title:
         ax.set_title(title, fontsize=12)

@@ -584,18 +584,28 @@ def load_led_sequence(
         with open(json_files[0]) as f:
             config = json.load(f)
         led_voltage = config["Description"]["LED"]
-        dataset_led[dataset] = led_voltage
-        print(f"{dataset} → LED {led_voltage}")
+        
+        # Check if the rootfile exists before adding the dataset
+        root_files = list(dirpath.glob("*.root"))
+        if root_files:
+            dataset_led[dataset] = led_voltage
+            print(f"{dataset} → LED {led_voltage}")
 
-    # Step 2: for each tile, find the matching dataset and load it
+
+    # Step 3: for each tile, find the matching dataset and load it
     tiles = {}
     loaded_datasets = {}  # cache so we don't reload the same dataset twice
 
     for tile_name, required_led in led_tile_map.items():
         matching = [ds for ds, led in dataset_led.items() if led == required_led]
+
+        # If the right file does not exist use the next closes one in voltage
         if not matching:
-            print(f"Warning: no dataset found for {tile_name} (LED={required_led}), skipping")
-            continue
+            required_v = float(required_led.strip().rstrip('Vv'))
+            matching = min(dataset_led.items(),
+                key=lambda item: abs(required_v - float(item[1].strip().rstrip('Vv'))),
+                )
+            print(f"Warning: no dataset found for {tile_name} (LED={required_led}), using instead {matching}")
         dataset = matching[0]
 
         if dataset not in loaded_datasets:
