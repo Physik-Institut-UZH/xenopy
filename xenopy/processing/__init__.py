@@ -2,5 +2,6 @@
 Processing module for xenopy 
 """
 
-from .processing import *
+from .pulseprocessing import *
+from .waveformprocessing import *
 from .spectra import *
