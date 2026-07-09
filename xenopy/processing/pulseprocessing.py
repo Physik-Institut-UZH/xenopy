@@ -1,3 +1,4 @@
+import json
 import matplotlib.pyplot as plt
 import numpy as np
 import awkward as ak
@@ -16,6 +17,27 @@ from tqdm import tqdm
 import logging
 logger = logging.getLogger(__name__)
 
+###### PE Conversion ######
+def convert_to_pe(waveforms, gain_file):
+    """Convert waveforms to PE units using a gain JSON file.
+
+    Args:
+        waveforms (dict): accepts tiles as returned by ``load_xenodaq_run``
+        gain_file (str): Path to a JSON file with gain data.
+
+    Returns:
+        dict: ``{channel: array}`` with waveforms in PE units.
+    """
+    with open(gain_file, 'r') as f:
+        gain_data = json.load(f)
+    waveforms_pe = {}
+    for channel, data in waveforms.items():
+        if channel in gain_data:
+            spe = gain_data[channel]['SPE']
+            waveforms_pe[channel] = -np.array(data['waveforms']) / spe
+        else:
+            print(f"Warning: no gain data for {channel}")
+    return waveforms_pe
 
 
 ###### Rebin ######
