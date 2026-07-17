@@ -2,6 +2,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.gridspec import GridSpec
 from typing import Optional
+from pathlib import Path
 import matplotlib.cm as cm
 
 
@@ -120,3 +121,95 @@ def plot_pulses(waveform: np.ndarray, pulse_list: list,
                              x1=pulse[0], x2=pulse[-1],
                              alpha=0.2, color='cyan')
     return ax
+
+
+def plot_event(event_idx, wf, muon1, muon2, date_str, offset=0,
+                t0=900, t1=1100, s0=140_000, s1=190_000,
+                dt_ns=10, save_path=None):
+    """
+    Plot trigger region + drift window for a single event, with x-axis in
+    drift time (us) instead of raw sample index.
+
+    Parameters
+    ----------
+    event_idx : int
+        Global event number.
+    wf, muon1, muon2 : array-like
+        Waveform arrays as loaded (0-indexed locally, starting at `offset`).
+    date_str : str
+        Label for the run/date, shown in the title.
+    offset : int
+        entry_start used when loading wf/muon1/muon2.
+    t0, t1 : int
+        Sample range for the trigger region (left panel).
+    s0, s1 : int
+        Sample range for the drift window (right panel).
+    dt_ns : float
+        Sample period in nanoseconds (default 10 ns/sample).
+    save_path : str or Path, optional
+        If given, saves the figure there instead of showing it.
+
+    Returns
+    -------
+    fig, (ax_left, ax_right)
+    """
+    local_idx = event_idx - offset
+    if not (0 <= local_idx < len(wf)):
+        raise IndexError(
+            f"Event {event_idx} not in loaded range "
+            f"[{offset}, {offset + len(wf)})"
+        )
+
+    dt_us = dt_ns / 1000  # ns -> us
+
+    fig, (ax_left, ax_right) = plt.subplots(1, 2, figsize=(11, 3), dpi=120)
+    fig.suptitle(f'Event {event_idx}  —  {date_str}', fontsize=14, fontweight='bold')
+
+    # left: trigger region with muon channels
+    t1_wf = min(t1, len(wf[local_idx]))
+    t1_m1 = min(t1, len(muon1[local_idx]))
+    t1_m2 = min(t1, len(muon2[local_idx]))
+    ax_left.plot(np.arange(t0, t1_wf) * dt_us, wf[local_idx][t0:t1_wf],
+                 color='#4477aa', lw=1.1, label='summed tiles')
+    ax_left.plot(np.arange(t0, t1_m1) * dt_us, muon1[local_idx][t0:t1_m1],
+                 color='#9a0505', lw=1.1, alpha=0.7, label='muon1')
+    ax_left.plot(np.arange(t0, t1_m2) * dt_us, muon2[local_idx][t0:t1_m2],
+                 color='#228833', lw=1.1, alpha=0.7, label='muon2')
+    ax_left.set_xlim(t0 * dt_us, t1 * dt_us)
+    ax_left.set_ylabel('ADC counts', fontsize=11)
+    ax_left.set_xlabel('Drift time [µs]', fontsize=11)
+    ax_left.legend(fontsize=11, loc='upper right')
+    ax_left.set_title('Trigger region', fontsize=13, pad=6)
+
+    # right: drift window region
+    s1_wf = min(s1, len(wf[local_idx]))
+    ax_right.plot(np.arange(s0, s1_wf) * dt_us, wf[local_idx][s0:s1_wf],
+                  color='#4477aa', lw=0.8, label='summed tiles')
+    ax_right.set_xlim(s0 * dt_us, s1 * dt_us)
+    ax_right.set_ylabel('ADC counts', fontsize=11)
+    ax_right.set_xlabel('Drift time [µs]', fontsize=11)
+    ax_right.legend(fontsize=11, loc='upper right')
+    ax_right.set_title('Drift window', fontsize=13, pad=6)
+
+    plt.tight_layout()
+
+    if save_path is not None:
+        fig.savefig(save_path, bbox_inches='tight')
+    else:
+        plt.show()
+
+    return fig, (ax_left, ax_right)
+
+
+def plot_events(event_indices, wf, muon1, muon2, date_str, offset=0,
+                 t0=900, t1=1100, s0=140_000, s1=190_000,
+                 dt_ns=10, save_dir=None):
+    """
+    Plot trigger region + drift window for multiple events.
+    """
+    for idx in event_indices:
+        save_path = None
+        if save_dir is not None:
+            save_path = Path(save_dir) / f'event_{idx}.png'
+        plot_event(idx, wf, muon1, muon2, date_str, offset=offset,
+                   t0=t0, t1=t1, s0=s0, s1=s1, dt_ns=dt_ns, save_path=save_path)
