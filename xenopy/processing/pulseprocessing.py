@@ -409,12 +409,13 @@ def process_pulses(filename, entry_start = None, entry_stop = None):
 
     ## Add which cuts they pass!
     cut_rqs(pulses)
+    
     try:
         pulses["cut_trigger"] = triggerSelection(muon_channels)
     except:
         logger.info("No muons available")
     try:
-        pulses["cut_antiMuonVeto"] = anitMuonVeto(muon_channels)
+        pulses["cut_antiMuonVeto"] = antiMuonVeto(muon_channels)
     except:
         logger.info("No muon3 available")
 
@@ -487,12 +488,16 @@ def cut_rqs(pulses):
 
 def triggerSelection(muon_channels):
 
-    maskmuon1 = np.any(muon_channels["muon1"][:,200:300] > 100, axis = 1)
-    maskmuon2 = np.any(muon_channels["muon2"][:,200:300] > 100, axis = 1)
+    wfmuon1 = muon_channels["muon1"][:,950:1000]
+    wfmuon2 = muon_channels["muon2"][:,950:1000]
 
-    return (maskmuon1 & maskmuon2)
+    maskmuon1 = np.any(wfmuon1 >= 200, axis = 1)
+    maskmuon2 = np.any(wfmuon2 >= 200, axis = 1)
+    masksum = np.any((wfmuon1 + wfmuon2) >= 1200, axis = 1)
 
-def anitMuonVeto(muon_channels):
+    return (maskmuon1 & maskmuon2 & masksum)
+
+def antiMuonVeto(muon_channels):
 
     maskmuon3 = np.any(muon_channels["muon3"] < 100, axis = 1)
 
