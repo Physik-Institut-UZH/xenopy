@@ -59,97 +59,81 @@ def bin_multiple_waveforms(arr, factor):
     return arr.reshape(n_rows, n_bins, factor).sum(axis=2)
 
 
-# ------------- Pulse Processing ------------- #
+# ------------- Pulse Processing - updated for Run 6 ------------- #
 
-## REMARK: Currently this is only plausible for muons as the pulse finder was tuned for muons!
-
-def DoGPulseFinder(rawWf):
-
-    """ Pulse finder based on the difference of gaussians """
-
-    # Sigmas are tuned to muons in xenoscope, redo more carefully with clean data
-    sigma_1 = 200
-    sigma_2 = 1000
-
+def DoGPulseFinder(rawWf, sigma_1=100, sigma_2=500,
+                   deriv_thresh=0.001, amp_thresh=0.5,
+                   peak_thresh=5, scaling=1, area_thresh=1):
+    """
+    Difference-of-Gaussians peak finder. Returns (starts, ends, peaks).
+    Parameters exposed so they can be swept for the robustness study.
+    """
     filteredWf = gaussian_filter1d(rawWf, sigma_1) - gaussian_filter1d(rawWf, sigma_2)
+    d1 = np.gradient(filteredWf)
+    d2 = np.gradient(d1)
 
-    derivative1 = np.gradient(filteredWf)
-    derivative2 = np.gradient(derivative1)
+    boundaries = np.where((np.abs(d1) < deriv_thresh * scaling) &
+                          (d2 > 0) &
+                          (filteredWf < -amp_thresh * scaling))[0]
+    cand_peaks = np.where((np.abs(d1) < deriv_thresh * scaling) &
+                          (d2 < 0) &
+                          (rawWf > peak_thresh * scaling))[0]
 
-    # potential Boundaries where the derivative is around 0 and the second derivative is larger then zero -> minimum 
-    # potnteial Peaks: first derivative around 0 and second < zero
-    # Why not exactly zero? won't have the value == 0 in the array but close to zero!
-    # filteredWf has to be lower then -25 to reduce noise!
-    scaling = 1 # since the waveforms are not gain corrected anymore rescale the factors (gain ~O(1000))
-    potentialBoundaries = np.where((np.abs(derivative1) < 0.001*scaling) & (derivative2 > 0) & (filteredWf < -0.5*scaling))[0]
-    potentialPeaks = np.where((np.abs(derivative1) < 0.001*scaling) & (derivative2 < 0) & (rawWf > 5*scaling))[0]
+    if len(boundaries) == 0:
+        return [], [], []
 
-    if len(potentialBoundaries) == 0:
- 
-        starts = []
-        ends = []
-        peaks = []
-
-        return starts, ends, peaks
-
-    starts = []
-    ends = []
-    peaks = []
-
-    for i in range(0, len(potentialBoundaries[:-1])):
-        tmp_start =  potentialBoundaries[i]
-        tmp_end = potentialBoundaries[i+1]
-        tmp_peaks = potentialPeaks[(potentialPeaks > tmp_start) & (potentialPeaks < tmp_end)]
-        area = np.sum(rawWf[tmp_start:tmp_end])
-        if (len(tmp_peaks) > 0) and (area / (tmp_end -tmp_start) > 1): # second argument is to not accept tails as pulses!
-            starts.append(potentialBoundaries[i])
-            ends.append(potentialBoundaries[i+1])
-            peaks.append(tmp_peaks[np.argmax(filteredWf[tmp_peaks])])
-    
+    starts, ends, peaks = [], [], []
+    for i in range(len(boundaries) - 1):
+        s, e = boundaries[i], boundaries[i + 1]
+        p_in = cand_peaks[(cand_peaks > s) & (cand_peaks < e)]
+        if len(p_in) > 0 and np.sum(rawWf[s:e]) / (e - s) > area_thresh:
+            starts.append(s)
+            ends.append(e)
+            peaks.append(p_in[np.argmax(filteredWf[p_in])])
     return starts, ends, peaks
     
 
-def mergePulses(rawWf, starts, ends, peaks):
-    
+def mergePulses(rawWf, starts, ends, peaks, gap_tol=100):
+    """
+    Merge consecutive peaks into pulses if their boundaries touch,
+    i.e. the gap between ends[i] and starts[i+1] is <= gap_tol.
+
+    gap_tol : int
+        Max gap (samples) between one boundary's end and the next's start
+        to still count as 'touching'. 0 = strictly contiguous.
+    """
     if len(starts) == 0:
         return [], [], []
 
-    final_starts = []
-    final_ends = []
-    final_peaks = []
-    current_start = starts[0]
-    current_peak = peaks[0]
-    for i in range(0,len(starts)-1):
-        next_peak = peaks[i+1]
-        scaling = 1 # remove scaling as gains are applied
-        if ak.any(rawWf[current_peak:next_peak] < (max([rawWf[current_peak],rawWf[next_peak]])/10/scaling)):# or ((next_peak- current_start) > 10000): # maybe make this better?
-            final_starts.append(current_start)
-            final_ends.append(ends[i])
-            final_peaks.append(np.argmax(rawWf[current_start:ends[i]]) + current_start )
-            current_start = starts[i+1]
-            current_peak = peaks[i+1]
-        else:
-            if rawWf[next_peak] > rawWf[current_peak]:
-                current_peak = next_peak
-            continue
-
-    # finish the last pulse! 
-    final_starts.append(current_start)
-    final_ends.append(ends[-1])
-    final_peaks.append(current_peak)
-
-    return final_starts, final_ends, final_peaks
+    fs, fe, fp = [], [], []
+    cur = starts[0]
+    for i in range(len(starts) - 1):
+        gap = starts[i + 1] - ends[i]
+        if gap > gap_tol:                      
+            fs.append(cur)
+            fe.append(ends[i])
+            fp.append(np.argmax(rawWf[cur:ends[i]]) + cur)
+            cur = starts[i + 1]
+    fs.append(cur)
+    fe.append(ends[-1])
+    fp.append(np.argmax(rawWf[cur:ends[-1]]) + cur)
+    return fs, fe, fp
 
 
 def getFWHM(rawWf, start, end, peak):
-    """ Define FWHM as the time from the first halfmax until the last halfmax in the pulse """
 
-    halfMax = rawWf[peak]/2
-    left_index = np.where(rawWf[start:peak] >= halfMax)[0][0] + start
-    right_index = np.where(rawWf[peak:end] >= halfMax)[0][-1] + peak
-    fwhm = right_index - left_index
-
-    return fwhm, left_index, right_index
+    """ FWHM = time from first halfmax to last halfmax in the pulse.
+        Returns (nan, nan, nan) if no half-max crossing exists (e.g. peak
+        coincides with a boundary), so one bad pulse doesn't discard the event. """
+    
+    halfMax = rawWf[peak] / 2
+    left_hits = np.where(rawWf[start:peak] >= halfMax)[0]
+    right_hits = np.where(rawWf[peak:end] >= halfMax)[0]
+    if len(left_hits) == 0 or len(right_hits) == 0:
+        return np.nan, np.nan, np.nan
+    left_index = left_hits[0] + start
+    right_index = right_hits[-1] + peak
+    return right_index - left_index, left_index, right_index
 
 
 def getAFT(rawWf, start, end, inital = 0.1, final = 0.9):
@@ -222,9 +206,12 @@ def getMaxChannel(single_channels, start, end):
     return maxChannel
     
 
-def process_pulses(filename, entry_start = None, entry_stop = None):
+def process_pulses(filename, entry_start=None, entry_stop=None,
+                   sigma_1=100, sigma_2=500,
+                   gap_tol=100,
+                   **finder_kwargs):
     """
-    Full processing of events with pusle finder tuned for muon events, 
+    Full processing of events with pulse finder tuned for muon events, 
     takes the gain and baseline corrected waveforms as input.
 
     Args:
@@ -260,18 +247,23 @@ def process_pulses(filename, entry_start = None, entry_stop = None):
     baseline = metadata["baseline"][0]
     gain_file = metadata["gain_file"]
 
+    # t=0 reference: fixed muon trigger position
+    trigger_sample = 975          # center of the 950:1000 trigger window (see triggerSelection)
+    samples_per_us = 100          
+    trigger_time_us = trigger_sample / samples_per_us
 
     logger.info("Calculating pulse shape variables")
     # single_channels = ak.Array(single_channels)    
-
 
     pulses = []
     merge = True
 
     for n, rawWf in enumerate(tqdm(summed_channels)):
-        starts, ends, peaks = DoGPulseFinder(rawWf)
+        starts, ends, peaks = DoGPulseFinder(rawWf, sigma_1=sigma_1, sigma_2=sigma_2,
+                                             **finder_kwargs)
         if merge:
-            starts, ends, peaks = mergePulses(rawWf, starts, ends, peaks)
+            starts, ends, peaks = mergePulses(rawWf, starts, ends, peaks,
+                                               gap_tol=gap_tol)
         
         # Convert to numpy arrays for vectorized operations
         starts, ends, peaks = np.array(starts), np.array(ends), np.array(peaks)
@@ -297,6 +289,7 @@ def process_pulses(filename, entry_start = None, entry_stop = None):
                 "aftLeft_us": np.array([]),
                 "pulseStart_us": np.array([]), 
                 "pulseEnd_us": np.array([]),
+                "driftTime_us": np.array([]),
                 "maxima": np.array([]), 
                 # "coincidence": np.array([]),
                 # "nSaturatedChannels": np.array([]),
@@ -305,7 +298,8 @@ def process_pulses(filename, entry_start = None, entry_stop = None):
                 "peaktime_us": np.array([]), 
                 "aft50": np.array([]),
                 "baseline": baseline,
-                "eventID": eventID[n]
+                "eventID": eventID[n],
+                **getMuonAmplitudes(muon_channels, n)
             })
             continue
 
@@ -335,6 +329,7 @@ def process_pulses(filename, entry_start = None, entry_stop = None):
                 "fwhm": np.array([]), "aft": np.array([]), "fwhmLeft": np.array([]), "aftLeft": np.array([]),
                 "fwhm_us": np.array([]), "aft_us": np.array([]), "fwhmLeft_us": np.array([]), "aftLeft_us": np.array([]),
                 "pulseStart_us": np.array([]), "pulseEnd_us": np.array([]),
+                "driftTime_us": np.array([]),
                 "maxima": np.array([]), 
                 # "coincidence": np.array([]),
                 # "nSaturatedChannels": np.array([]),
@@ -342,7 +337,8 @@ def process_pulses(filename, entry_start = None, entry_stop = None):
                 "maxima_over_fwhm": np.array([]), "peaktime_us": np.array([]),
                 "aft50": np.array([]),
                 "baseline": baseline,
-                "eventID": eventID[n]
+                "eventID": eventID[n],
+                **getMuonAmplitudes(muon_channels, n)
             })
             print(f"Empty event {n} because there are unresolved issues. Error: {e}")            
             continue
@@ -389,6 +385,7 @@ def process_pulses(filename, entry_start = None, entry_stop = None):
             "aftLeft_us": afts_left_sorted / 100,
             "pulseStart_us": starts_sorted / 100,
             "pulseEnd_us": ends_sorted / 100,
+            "driftTime_us": (starts_sorted / 100) - trigger_time_us,
             "maxima": maximas_sorted,
             # "coincidence": coincidence_sorted,
             # "nSaturatedChannels": nSaturatedChannels_sorted,
@@ -397,13 +394,17 @@ def process_pulses(filename, entry_start = None, entry_stop = None):
             "peaktime_us": (starts_sorted - peaks_sorted) / 100,
             "aft50": aft50_sorted,
             "baseline": baseline,
-            "eventID": eventID[n]
+            "eventID": eventID[n],
+            **getMuonAmplitudes(muon_channels, n)
         })
 
 
     # Attach gain file as metadata on each event
     for pulse in pulses:
         pulse["gain_file"] = gain_file
+        pulse["sigma_1"] = sigma_1
+        pulse["sigma_2"] = sigma_2
+        pulse["gap_tol"] = gap_tol
 
     pulses = ak.Array(pulses)
 
@@ -421,7 +422,6 @@ def process_pulses(filename, entry_start = None, entry_stop = None):
 
     return pulses
 
-
 def find_root_files(dataset_folder, datadir):
     """Find all .root files in a dataset folder."""
 
@@ -431,11 +431,12 @@ def find_root_files(dataset_folder, datadir):
     return sorted(glob.glob(filepath))
 
 
-def processEventsFromMultipleFiles(datasets, datadir):
+def processEventsFromMultipleFiles(datasets, datadir,
+                                   sigma_1=100, sigma_2=500, gap_tol=100,
+                                   **finder_kwargs):
     """
     Function to process multiple files at once (use this function if the files are small!)
     """
-
     pulses = []
     for dataset in datasets:
         logger.info(f"Processing dataset {dataset}")
@@ -446,15 +447,14 @@ def processEventsFromMultipleFiles(datasets, datadir):
 
         for root_file in root_files:
             logger.info(f"Processing file {root_file}")
-            pulses_tmp = process_pulses(root_file)
+            pulses_tmp = process_pulses(root_file,
+                                        sigma_1=sigma_1, sigma_2=sigma_2,
+                                        gap_tol=gap_tol, **finder_kwargs)
             pulses.append(pulses_tmp)
-            
-    
+
     pulses = ak.Array(pulses)
     pulses = ak.concatenate(pulses)
-    
     logger.info("Processed all files.")
-
     return pulses
 
    
@@ -486,14 +486,33 @@ def cut_rqs(pulses):
     return pulses
 
 
+def getMuonAmplitudes(muon_channels, event_idx, window=(950, 1000)):
+    """
+    Extract muon trigger peak amplitudes in the fixed trigger window.
+    In case we need to check the validity of the threshold directly from the processed data.
+
+    Returns a dict of peak ADC values (and their sample positions) per channel.
+    """
+    w0, w1 = window
+    out = {}
+    for ch in ("muon1", "muon2", "muon3"):
+        if ch in muon_channels.fields:
+            seg = np.array(muon_channels[ch][event_idx][w0:w1])
+            out[f"{ch}_amp"] = float(seg.max())
+            out[f"{ch}_amp_sample"] = int(np.argmax(seg)) + w0
+        else:
+            out[f"{ch}_amp"] = np.nan
+            out[f"{ch}_amp_sample"] = -1
+    return out
+
 def triggerSelection(muon_channels):
 
     wfmuon1 = muon_channels["muon1"][:,950:1000]
     wfmuon2 = muon_channels["muon2"][:,950:1000]
 
-    maskmuon1 = np.any(wfmuon1 >= 200, axis = 1)
-    maskmuon2 = np.any(wfmuon2 >= 200, axis = 1)
-    masksum = np.any((wfmuon1 + wfmuon2) >= 1200, axis = 1)
+    maskmuon1 = np.any(wfmuon1 >= 100, axis = 1)
+    maskmuon2 = np.any(wfmuon2 >= 100, axis = 1)
+    masksum = np.any((wfmuon1 + wfmuon2) >= 1000, axis = 1)
 
     return (maskmuon1 & maskmuon2 & masksum)
 
