@@ -207,7 +207,7 @@ def getMaxChannel(single_channels, start, end):
     
 
 def process_pulses(filename, entry_start=None, entry_stop=None,
-                   sigma_1=100, sigma_2=500,
+                   sigma_1=150, sigma_2=750,
                    gap_tol=100,
                    **finder_kwargs):
     """
@@ -231,6 +231,9 @@ def process_pulses(filename, entry_start=None, entry_stop=None,
             tree = f["events"]
             waveforms = tree.arrays(filter_name=["summed_tiles", "eventID", "muon1", "muon2", "muon3"], entry_start= entry_start, entry_stop=entry_stop)
         logger.info(f"Loading waveforms from {filename}, from event {entry_start} to event {entry_stop}")
+    if len(waveforms) == 0: # in case the selected entry start is larger than the number of events in the file
+        print("No events to process.")
+        return waveforms
 
     summed_channels = waveforms["summed_tiles"]
     eventID = waveforms["eventID"]
@@ -241,9 +244,10 @@ def process_pulses(filename, entry_start=None, entry_stop=None,
 
     except:
         logger.info("No Muons in the file saved")
+        muon_channels = ak.Array([])
 
     with open(filename[:-5] + "_metadata.json") as f:
-       metadata = json.load(f)
+        metadata = json.load(f)
     baseline = metadata["baseline"][0]
     gain_file = metadata["gain_file"]
 
@@ -299,7 +303,8 @@ def process_pulses(filename, entry_start=None, entry_stop=None,
                 "aft50": np.array([]),
                 "baseline": baseline,
                 "eventID": eventID[n],
-                **getMuonAmplitudes(muon_channels, n)
+                **getMuonAmplitudes(muon_channels, n),
+                **getMuonArea(muon_channels, n)
             })
             continue
 
@@ -338,7 +343,8 @@ def process_pulses(filename, entry_start=None, entry_stop=None,
                 "aft50": np.array([]),
                 "baseline": baseline,
                 "eventID": eventID[n],
-                **getMuonAmplitudes(muon_channels, n)
+                **getMuonAmplitudes(muon_channels, n),
+                **getMuonArea(muon_channels, n)
             })
             print(f"Empty event {n} because there are unresolved issues. Error: {e}")            
             continue
@@ -395,7 +401,8 @@ def process_pulses(filename, entry_start=None, entry_stop=None,
             "aft50": aft50_sorted,
             "baseline": baseline,
             "eventID": eventID[n],
-            **getMuonAmplitudes(muon_channels, n)
+            **getMuonAmplitudes(muon_channels, n),
+            **getMuonArea(muon_channels, n)
         })
 
 
@@ -410,15 +417,12 @@ def process_pulses(filename, entry_start=None, entry_stop=None,
 
     ## Add which cuts they pass!
     cut_rqs(pulses)
-    
-    try:
-        pulses["cut_trigger"] = triggerSelection(muon_channels)
+
+    try: 
+        pulses["cut_trigger"] = triggerSelection(pulses)
+        pulses["cut_antiMuonVeto"] = antiMuonVeto(pulses)
     except:
-        logger.info("No muons available")
-    try:
-        pulses["cut_antiMuonVeto"] = antiMuonVeto(muon_channels)
-    except:
-        logger.info("No muon3 available")
+        print("No muons in the file available")
 
     return pulses
 
@@ -505,22 +509,41 @@ def getMuonAmplitudes(muon_channels, event_idx, window=(950, 1000)):
             out[f"{ch}_amp_sample"] = -1
     return out
 
-def triggerSelection(muon_channels):
 
-    wfmuon1 = muon_channels["muon1"][:,950:1000]
-    wfmuon2 = muon_channels["muon2"][:,950:1000]
+def getMuonArea(muon_channels, event_idx, window=(950, 1000), threshold = 10):
+    """
+    Extract muon trigger area in the fixed trigger window.
+    In case we need to check the validity of the threshold directly from the processed data.
 
-    maskmuon1 = np.any(wfmuon1 >= 100, axis = 1)
-    maskmuon2 = np.any(wfmuon2 >= 100, axis = 1)
-    masksum = np.any((wfmuon1 + wfmuon2) >= 1000, axis = 1)
+    Returns a dict of area ADC values per channel.
+    """
+    w0, w1 = window
+    out = {}
+    for ch in ("muon1", "muon2", "muon3"):
+        if ch in muon_channels.fields:
+            waveform_window = muon_channels[ch][event_idx][w0:w1]
+            if len(waveform_window[waveform_window > threshold]) == 0:
+                out[f"{ch}_area"] = 0
+            else:
+                area = np.sum(waveform_window[waveform_window > threshold])
+                out[f"{ch}_area"] = area
+        else:
+            out[f"{ch}_area"] = np.nan
 
-    return (maskmuon1 & maskmuon2 & masksum)
+    return out
 
-def antiMuonVeto(muon_channels):
+def triggerSelection(pulses, threshold = 1000):
+    " Trigger selection based on the area in both panels"
 
-    maskmuon3 = np.any(muon_channels["muon3"] < 100, axis = 1)
+    mask = (pulses["muon1_area"] + pulses["muon2_area"]) >= threshold
 
-    return maskmuon3
+    return ak.fill_none(mask, False)
+
+def antiMuonVeto(pulses, threshold = 140):
+
+    maskmuon3 = pulses["muon3_area"] < threshold
+
+    return ak.fill_none(maskmuon3, False)
 
 
 def data_selection(pulses):
