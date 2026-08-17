@@ -259,6 +259,20 @@ def process_pulses(filename, entry_start=None, entry_stop=None,
     logger.info("Calculating pulse shape variables")
     # single_channels = ak.Array(single_channels)    
 
+    ## read in additional muon panel information if given
+    window_muonpanel = finder_kwargs.pop('window_muonpanel', None)
+
+    muon_kwargs = {}
+    if window_muonpanel is not None:
+        muon_kwargs['window'] = window_muonpanel
+
+    ## read in additional muon panel trigger information if given
+    threshold_muonpanel = finder_kwargs.pop('threshold_muonpanel', None)
+    trigger_kwargs = {}
+    if threshold_muonpanel is not None:
+        trigger_kwargs['threshold'] = threshold_muonpanel
+    
+
     pulses = []
     merge = True
 
@@ -303,8 +317,8 @@ def process_pulses(filename, entry_start=None, entry_stop=None,
                 "aft50": np.array([]),
                 "baseline": baseline,
                 "eventID": eventID[n],
-                **getMuonAmplitudes(muon_channels, n),
-                **getMuonArea(muon_channels, n)
+                **getMuonAmplitudes(muon_channels, n, **muon_kwargs),
+                **getMuonArea(muon_channels, n, **muon_kwargs)
             })
             continue
 
@@ -343,8 +357,8 @@ def process_pulses(filename, entry_start=None, entry_stop=None,
                 "aft50": np.array([]),
                 "baseline": baseline,
                 "eventID": eventID[n],
-                **getMuonAmplitudes(muon_channels, n),
-                **getMuonArea(muon_channels, n)
+                **getMuonAmplitudes(muon_channels, n, **muon_kwargs),
+                **getMuonArea(muon_channels, n, **muon_kwargs)
             })
             print(f"Empty event {n} because there are unresolved issues. Error: {e}")            
             continue
@@ -401,8 +415,8 @@ def process_pulses(filename, entry_start=None, entry_stop=None,
             "aft50": aft50_sorted,
             "baseline": baseline,
             "eventID": eventID[n],
-            **getMuonAmplitudes(muon_channels, n),
-            **getMuonArea(muon_channels, n)
+            **getMuonAmplitudes(muon_channels, n, **muon_kwargs),
+            **getMuonArea(muon_channels, n, **muon_kwargs)
         })
 
 
@@ -419,7 +433,7 @@ def process_pulses(filename, entry_start=None, entry_stop=None,
     cut_rqs(pulses)
 
     try: 
-        pulses["cut_trigger"] = triggerSelection(pulses)
+        pulses["cut_trigger"] = triggerSelection(pulses, trigger_kwargs)
         pulses["cut_antiMuonVeto"] = antiMuonVeto(pulses)
     except:
         print("No muons in the file available")
