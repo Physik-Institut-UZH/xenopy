@@ -155,7 +155,7 @@ def getAFT50(rawWf, start, end):
 
     aft50 = np.where(area_ - totalArea*0.5 > 0)[0][0] + start
 
-    return aft50
+    return aft50 / 100
 
 def getCoincidence(single_channels, start, end):
     nChannels = 0
@@ -428,15 +428,13 @@ def process_pulses(filename, entry_start=None, entry_stop=None,
         pulse["gap_tol"] = gap_tol
 
     pulses = ak.Array(pulses)
-
+    
     ## Add which cuts they pass!
+
+    pulses["cut_trigger"] = triggerSelection(pulses, **trigger_kwargs)
+    pulses["cut_antiMuonVeto"] = antiMuonVeto(pulses)
     cut_rqs(pulses)
 
-    try: 
-        pulses["cut_trigger"] = triggerSelection(pulses, trigger_kwargs)
-        pulses["cut_antiMuonVeto"] = antiMuonVeto(pulses)
-    except:
-        print("No muons in the file available")
 
     return pulses
 
@@ -479,25 +477,17 @@ def processEventsFromMultipleFiles(datasets, datadir,
 def cut_rqs(pulses):
     """ Add cut variables to the awkward arrays in order"""
     
-    # Number of pulses
-    cut_nPulses = pulses["nPulses"] <= 2
-
-    # Prominence
-    cut_prominence = ak.any(pulses["area"]/pulses["totalWfArea"] >= 0.4, axis=1)
-
     # Width check
     non_empty_mask = [len(x) > 0 for x in pulses["fwhm_us"]]
     valid_fwhm = pulses["fwhm_us"][non_empty_mask]
-    cut_valid_data = (valid_fwhm[:, 0] > 3) & (valid_fwhm[:, 0] < 40)
+    cut_valid_data = (valid_fwhm[:, 0] > 5) & (valid_fwhm[:, 0] < 30)
     cut_width = np.zeros(len(pulses["fwhm_us"]), dtype=bool)
     cut_width[non_empty_mask] = cut_valid_data
     
     # combine all the cuts
-    cut_all = cut_nPulses & cut_prominence & cut_width
+    cut_all =  pulses["cut_trigger"] &  pulses["cut_antiMuonVeto"] & cut_width
 
     # Add the cuts as new fields to the pulses array
-    pulses["cut_nPulses"] = cut_nPulses
-    pulses["cut_prominence"] = cut_prominence
     pulses["cut_width"] = cut_width
     pulses["cut_all"] = cut_all
 
@@ -549,13 +539,24 @@ def getMuonArea(muon_channels, event_idx, window=(950, 1000), threshold = 10):
 def triggerSelection(pulses, threshold = 1000):
     " Trigger selection based on the area in both panels"
 
-    mask = (pulses["muon1_area"] + pulses["muon2_area"]) >= threshold
+    if np.all(np.isnan(pulses["muon1_area"])) and np.all(np.isnan(pulses["muon2_area"])):
+        mask = np.ones(len(pulses), dtype=bool )
+        print("Muon1 and Muon2 not available.")
+    
+    else:
+        mask = pulses["muon1_area"] + pulses["muon2_area"] >= threshold
 
     return ak.fill_none(mask, False)
 
 def antiMuonVeto(pulses, threshold = 140):
 
-    maskmuon3 = pulses["muon3_area"] < threshold
+    if np.all(np.isnan(pulses["muon2_area"])):
+        maskmuon3 = np.ones(len(pulses), dtype=bool)
+        print("Muon3 not available.")
+
+
+    else:
+        maskmuon3 = pulses["muon3_area"] < threshold
 
     return ak.fill_none(maskmuon3, False)
 
