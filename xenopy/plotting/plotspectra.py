@@ -62,8 +62,16 @@ def plot_spectra_vs_led(charge_by_led: dict,
 
 def plot_spectrum_fit(fit_result: dict,
                       title: str = "",
-                      ax: Optional[plt.Axes] = None) -> plt.Axes:
-    """Plot histogram plus fitted 0-PE and 1-PE Gaussians """
+                      ax: Optional[plt.Axes] = None,
+                      floor_frac: float = 0.01,
+                      data_color: str = 'black',
+                      pedestal_color: str = 'dodgerblue',
+                      peak_color: str = 'orangered') -> plt.Axes:
+    """Plot histogram plus fitted 0-PE and 1-PE Gaussians."""
+
+    def clip_tails(y, floor):
+        return np.where(y >= floor, y, np.nan)
+
     if ax is None:
         fig, ax = plt.subplots(figsize=(8, 5))
 
@@ -72,20 +80,22 @@ def plot_spectrum_fit(fit_result: dict,
     bin_centers = fit_result["bin_centers"]
 
     ax.hist(bin_centers, bins=bin_edges, weights=hist,
-            histtype='step', linewidth=1.2, color='black', label='Data')
+            histtype='stepfilled', linewidth=1.2, alpha=0.3,
+            color=data_color, edgecolor=data_color, label='Data')
 
     x_plot = np.linspace(bin_edges[0], bin_edges[-1], 2000)
+    floor = floor_frac * np.max(hist)
 
     fit0 = fit_result.get("fit_0pe")
     if fit0 is not None:
         p0 = fit0["params"]
-        ax.plot(x_plot, _gaussian(x_plot, *p0), color='dodgerblue', lw=2, alpha=0.8,
-            label="Pedestal fit")
+        y0 = clip_tails(_gaussian(x_plot, *p0), floor)
+        ax.plot(x_plot, y0, color=pedestal_color, lw=2, alpha=0.8, label="Pedestal fit")
 
     fit1 = fit_result["fit_1pe"]
     p1 = fit1["params"]
-    ax.plot(x_plot, _gaussian(x_plot, *p1), color='orangered', lw=2, alpha=0.8,
-            label="1-PE peak fit")
+    y1 = clip_tails(_gaussian(x_plot, *p1), floor)
+    ax.plot(x_plot, y1, color=peak_color, lw=2, alpha=0.8, label="1-PE peak fit")
 
     ax.set_xlabel(r"$\mathrm{Charge~[ADC~counts]}$")
     ax.set_ylabel(r"$\mathrm{Counts}$")
