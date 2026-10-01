@@ -101,7 +101,8 @@ def load_gain(dataset):
 
 
 def save_processed_waveforms(dataset, outputdir, filenumbers, waveforms, metadata,
-                              target_basket_bytes=500_000_000):  # save in small chunks!
+                              target_basket_bytes=20_000_000):  # save in small chunks!
+    # change basket size in order to load single events easier! (always need to read the full basket)
 
     outputdir = os.path.join(outputdir, dataset)
     os.makedirs(outputdir, exist_ok=True)
