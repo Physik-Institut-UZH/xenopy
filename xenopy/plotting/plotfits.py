@@ -40,8 +40,8 @@ def plot_fit(dt, r, fit_range, bin_width_us, range_=(0, 2500)):
             a.axvline(x, color="gray", lw=1, ls=":", zorder=0)
 
     ax_res.axhline(0, color="black", lw=0.8)
-    ax_res.axhspan(-2, 2, color=c_band2, alpha=0.40, linewidth=0)
-    ax_res.axhspan(-1, 1, color=c_band1, alpha=0.45, linewidth=0)
+    ax_res.fill_between(fit_range, -2, 2, color=c_band2, alpha=0.40, linewidth=0)
+    ax_res.fill_between(fit_range, -1, 1, color=c_band1, alpha=0.45, linewidth=0)
     ax_res.scatter(centres[m], std_res[m], s=8, color="black", alpha=0.8, linewidths=0, zorder=3)
     ax_res.set_ylim(-3.5, 3.5)
     ax_res.set_xlabel("Drift time [µs]")
