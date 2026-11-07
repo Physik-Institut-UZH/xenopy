@@ -30,7 +30,7 @@ def plot_fit(dt, r, fit_range, bin_width_us, range_=(0, 2500)):
             label="Gaussian + bkg fit")
     ax.text(0.03, 0.97, rf"μ = {mu:.1f} ± {mu_err:.1f} µs" "\n"
                         rf"σ = {sigma:.1f} ± {sigma_err:.1f} µs",
-            transform=ax.transAxes, ha="left", va="top")
+            transform=ax.transAxes, ha="left", va="top", fontsize=plt.rcParams["legend.fontsize"])
     ax.set_ylabel(f"Events / {bin_width_us:g} µs")
     ax.set_xlim(*range_)
     ax.legend(ncol=2, loc="lower center", bbox_to_anchor=(0.5, 1.0))
