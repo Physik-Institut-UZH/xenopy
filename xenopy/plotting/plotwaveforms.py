@@ -4,6 +4,7 @@ from matplotlib.gridspec import GridSpec
 from typing import Optional
 from pathlib import Path
 import matplotlib.cm as cm
+from scipy.ndimage import gaussian_filter1d
 
 
 
@@ -303,3 +304,52 @@ def plot_events(event_indices, wf, muon1, muon2, date_str, offset=0,
         plot_event(idx, wf, muon1, muon2, date_str, offset=offset,
                    t0=t0, t1=t1, s0=s0, s1=s1, dt_ns=dt_ns, save_path=save_path)
 
+def plot_dog(rawWf, sigma_1=50, sigma_2=250, xlim=None,
+                        sample_to_us=0.01, title='', **finder_kwargs):
+    """
+    Single-panel plot: raw waveform, both Gaussian-smoothed versions,
+    the DoG difference, and the found pulse(s) shaded.
+    """
+    smooth_1 = gaussian_filter1d(rawWf, sigma_1)
+    smooth_2 = gaussian_filter1d(rawWf, sigma_2)
+    filteredWf = smooth_1 - smooth_2
+
+    # find pulses with these same sigmas
+    s, e, p = xpr.DoGPulseFinder(rawWf, sigma_1=sigma_1, sigma_2=sigma_2, **finder_kwargs)
+    s, e, p = np.array(s), np.array(e), np.array(p)
+
+    x_us = np.arange(len(rawWf)) * sample_to_us
+
+    # each trace has a fixed role, so its colour is set here (Tol muted)
+    c_raw, c_s1, c_s2 = "#88CCEE", "#44AA99", "#CC6677"
+    c_dog, c_pulse = "#332288", "#DDCC77"
+
+    fig, ax = plt.subplots()  # size, dpi and fonts come from xenoscope.mplstyle
+
+    # shade found pulses first (so they sit behind the lines)
+    for idx, (st, en) in enumerate(zip(s, e)):
+        ax.axvspan(st * sample_to_us, en * sample_to_us,
+                   color=c_pulse, alpha=0.3,
+                   label='Found pulse' if idx == 0 else None, zorder=0)
+
+    # raw waveform and the two smoothed versions: thinner than the DoG
+    ax.plot(x_us, rawWf, lw=0.8, color=c_raw, label='Raw waveform')
+    ax.plot(x_us, smooth_1, lw=0.8, color=c_s1,
+            label=rf'Gaussian filter, $\sigma_1$={sigma_1}')
+    ax.plot(x_us, smooth_2, lw=0.8, color=c_s2,
+            label=rf'Gaussian filter, $\sigma_2$={sigma_2}')
+
+    # DoG difference
+    ax.plot(x_us, filteredWf, color=c_dog, lw=1, label='DoG')
+
+    ax.axhline(0, color='black', lw=0.5, ls='--', alpha=0.6)
+    ax.set_xlabel('Time [µs]')
+    ax.set_ylabel('ADC counts')
+    ax.legend(loc='upper left')
+
+    if xlim is not None:
+        ax.set_xlim(xlim[0] * sample_to_us, xlim[1] * sample_to_us)
+    if title:
+        ax.set_title(title)
+    ax.set_ylim(-35, 155)
+    return fig, ax, (smooth_1, smooth_2, filteredWf), (s, e, p)

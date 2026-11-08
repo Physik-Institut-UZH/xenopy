@@ -8,3 +8,4 @@ from .plotspectra import *
 from .plotprocessed import *
 from .plotfits import *
 from .plotled import *
+from .plotdog import *
