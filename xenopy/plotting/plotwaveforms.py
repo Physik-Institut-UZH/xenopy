@@ -4,6 +4,7 @@ from matplotlib.gridspec import GridSpec
 from typing import Optional
 from pathlib import Path
 import matplotlib.cm as cm
+import xenopy.processing as xpr
 from scipy.ndimage import gaussian_filter1d
 
 
